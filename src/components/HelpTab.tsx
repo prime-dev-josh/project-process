@@ -216,9 +216,9 @@ export default function HelpTab() {
       <section>
         <h3 className={cx(sideH2, "mb-1.5")}>Filter and look</h3>
         <div className="grid grid-cols-2 gap-1.5">
-          <Card icon={<IcoFilter />} title="Search & filter" body="Search titles, tap status pills or people in the left rail, or use the Groups dropdown to filter by one or more named groups (including Ungrouped)." />
+          <Card icon={<IcoFilter />} title="Search & filter" body="Search titles, tap status pills or people in the left rail, or use the Groups dropdown to filter by one or more named groups (including Ungrouped). The map stays in place; filter changes only pan or zoom out so every matching node stays on screen. Use Fit for a tight frame. Clear filters resets search and filters." />
           <Card icon={<IcoStatus />} title="Status" body="Incomplete, in progress, and done — shown as the ring on each ball." />
-          <Card icon={<IcoPeople />} title="Assign people" body="Open the assignee dropdown on a node or multi-select panel. The closed row shows the current person; search to pick someone else or Unassigned." />
+          <Card icon={<IcoPeople />} title="Assign people" body="Open the assignee dropdown on a node or multi-select panel. The closed row shows the current person; search to pick someone else or Unassigned. Assigned nodes use that person's Entra photo when Graph can reach it." />
           <Card icon={<IcoView />} title="View" body="Fit, Reorg, Physics, Text, Cards, and Pulse live under View. Node, Text, and Card sliders scale those pieces; force sliders are under Advanced. These stay on this device — Reset view prefs restores defaults." />
         </div>
       </section>

@@ -59,7 +59,7 @@ export default function PersonFace({ name, email = "", className }: Props) {
         <img
           src={src}
           alt=""
-          className="absolute top-[32%] left-1/2 h-[175%] w-[175%] max-w-none -translate-x-1/2 -translate-y-1/2 object-cover object-[center_20%]"
+          className="absolute inset-0 size-full object-cover object-center"
         />
       ) : (
         <Icon kind={icon} />

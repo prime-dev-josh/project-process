@@ -25,6 +25,7 @@ type Props = {
   onStatusFilters: (v: WorkflowStatus[]) => void;
   onEmployeeFilter: (v: string | null) => void;
   onGroupFilters: (v: string[]) => void;
+  onClearFilters: () => void;
   onSettings: (patch: Partial<GraphSettings>) => void;
   onFit: () => void;
   onReorg: () => void;
@@ -81,6 +82,7 @@ export default function FilterPanel({
   onStatusFilters,
   onEmployeeFilter,
   onGroupFilters,
+  onClearFilters,
   onSettings,
   onFit,
   onReorg,
@@ -90,6 +92,8 @@ export default function FilterPanel({
 }: Props) {
   const stats = useMemo(() => workflowStats(nodes, colorBy), [nodes, colorBy]);
   const [advanced, setAdvanced] = useState(false);
+  const hasFilters =
+    Boolean(search.trim()) || statusFilters.length > 0 || employeeFilter != null || groupFilters.length > 0;
 
   return (
     <div className="filter-panel space-y-2.5 pt-0.5">
@@ -117,7 +121,19 @@ export default function FilterPanel({
       />
 
       <section>
-        <h2 className={cx(sideH2, "mb-1.5")}>Filter</h2>
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <h2 className={cx(sideH2, "mb-0")}>Filter</h2>
+          {hasFilters ? (
+            <button
+              type="button"
+              className="cursor-pointer border-0 bg-transparent p-0 text-[10px] text-[var(--muted)] underline-offset-2 hover:text-[var(--text)] hover:underline"
+              title="Clear search and filters, then fit the map"
+              onClick={onClearFilters}
+            >
+              Clear filters
+            </button>
+          ) : null}
+        </div>
         <div className="grid grid-cols-3 gap-0.5">
           {WORKFLOW_STATUS_META.map(({ id, label, filterLabel, pillBg, pillText }) => {
             const count = stats.counts[id];

@@ -21,6 +21,7 @@ type Props = {
   onStatusFilters: (v: WorkflowStatus[]) => void;
   onEmployeeFilter: (v: string | null) => void;
   onGroupFilters: (v: string[]) => void;
+  onClearFilters: () => void;
   onSettings: (patch: Partial<GraphSettings>) => void;
   onResetSettings: () => void;
   onFit: () => void;
@@ -45,6 +46,7 @@ export default function LeftSidePanel({
   onStatusFilters,
   onEmployeeFilter,
   onGroupFilters,
+  onClearFilters,
   onSettings,
   onResetSettings,
   onFit,
@@ -78,6 +80,7 @@ export default function LeftSidePanel({
           onStatusFilters={onStatusFilters}
           onEmployeeFilter={onEmployeeFilter}
           onGroupFilters={onGroupFilters}
+          onClearFilters={onClearFilters}
           onSettings={onSettings}
           onResetSettings={onResetSettings}
           onFit={onFit}

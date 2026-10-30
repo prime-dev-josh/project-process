@@ -264,11 +264,11 @@ function paintNodeDisc(
     ctx.arc(0, 0, innerScreen, 0, Math.PI * 2);
     ctx.clip();
     if (photo && photo.naturalWidth) {
-      const cover = face * 2.2;
+      const cover = innerScreen * 2;
       const scale = Math.max(cover / photo.naturalWidth, cover / photo.naturalHeight);
       const dw = photo.naturalWidth * scale;
       const dh = photo.naturalHeight * scale;
-      ctx.drawImage(photo, -dw / 2, -dh * 0.32, dw, dh);
+      ctx.drawImage(photo, -dw / 2, -dh / 2, dw, dh);
     } else if (initials) {
       ctx.fillStyle = "#1a1208";
       ctx.font = `700 ${Math.max(6, face * 0.72)}px "Segoe UI", sans-serif`;
@@ -427,21 +427,22 @@ export default function GraphCanvas({
     [statusFilters, employeeFilter, groupFilters],
   );
 
-  const graphData = useMemo(() => {
-    const visible = nodes.filter((n) => {
-      if (hideFiltered && !isFiltered(n, search, settings.colorBy, filterOptions)) return false;
-      return true;
-    });
-    const ids = new Set(visible.map((n) => n.id));
-    return {
-      nodes: visible,
-      links: links.flatMap((l) => {
+  const graphData = useMemo(
+    () => ({
+      nodes,
+      links: links.map((l) => {
         const e = linkEnds(l);
-        if (!ids.has(e.source) || !ids.has(e.target)) return [];
-        return [{ id: l.id, source: e.source, target: e.target, kind: l.kind, arrows: l.arrows ?? "none" }];
+        return { id: l.id, source: e.source, target: e.target, kind: l.kind, arrows: l.arrows ?? "none" };
       }),
-    };
-  }, [nodes, links, hideFiltered, search, settings.colorBy, filterOptions]);
+    }),
+    [nodes, links],
+  );
+
+  function isShown(node: GraphNode | undefined) {
+    if (!node) return false;
+    if (!hideFiltered) return true;
+    return isFiltered(node, search, settings.colorBy, filterOptions);
+  }
 
   const photosRef = useRef(new Map<string, HTMLImageElement>());
   const photoAsked = useRef(new Set<string>());
@@ -607,6 +608,7 @@ export default function GraphCanvas({
 
     for (const node of liveEngineNodes()) {
       if (node.x == null || node.y == null) continue;
+      if (!isShown(node)) continue;
       const matched = isFiltered(node, search, settings.colorBy, filterOptions);
       const dim = !matched;
       const selected = selectedSet.has(node.id);
@@ -695,7 +697,7 @@ export default function GraphCanvas({
     let best: GraphNode | null = null;
     let bestD = Infinity;
     for (const n of liveEngineNodes()) {
-      if (n.x == null || n.y == null) continue;
+      if (n.x == null || n.y == null || !isShown(n)) continue;
       const r = nodePickRadius(n, k, nodeScale, pickSlack + extraPad);
       const d = Math.hypot(n.x - g.x, n.y - g.y);
       if (d <= r && d < bestD) {
@@ -766,7 +768,7 @@ export default function GraphCanvas({
       const e = linkEnds(l);
       const src = byId.get(e.source);
       const tgt = byId.get(e.target);
-      if (!src || !tgt || src.x == null || src.y == null || tgt.x == null || tgt.y == null) continue;
+      if (!src || !tgt || !isShown(src) || !isShown(tgt) || src.x == null || src.y == null || tgt.x == null || tgt.y == null) continue;
       const d = distToSeg(g.x, g.y, src.x, src.y, tgt.x, tgt.y);
       if (d <= thresh && d < bestD) {
         bestId = l.id;
@@ -805,7 +807,7 @@ export default function GraphCanvas({
     const live = liveEngineNodes();
     const membersByGroup = new Map<string, GraphNode[]>();
     for (const node of live) {
-      if (!node.groupId || node.x == null || node.y == null) continue;
+      if (!node.groupId || node.x == null || node.y == null || !isShown(node)) continue;
       const list = membersByGroup.get(node.groupId);
       if (list) list.push(node);
       else membersByGroup.set(node.groupId, [node]);
@@ -929,7 +931,7 @@ export default function GraphCanvas({
   function nodesInLasso(points: Point[]) {
     const region = lassoRegion(points);
     if (region.length < 3) return [];
-    return liveEngineNodes().filter((n) => n.x != null && n.y != null && pointInPolygon(n.x, n.y, region));
+    return liveEngineNodes().filter((n) => isShown(n) && n.x != null && n.y != null && pointInPolygon(n.x, n.y, region));
   }
 
   function selectedPositions() {
@@ -1198,6 +1200,11 @@ export default function GraphCanvas({
       backgroundColor={palette.bg}
       nodeId="id"
       nodeLabel={() => ""}
+      nodeVisibility={(n) => isShown(n)}
+      linkVisibility={(l) => {
+        const e = linkEnds(l);
+        return isShown(nodeById.get(e.source)) && isShown(nodeById.get(e.target));
+      }}
       linkSource="source"
       linkTarget="target"
       cooldownTicks={settings.physics ? 320 : 0}
@@ -1322,7 +1329,7 @@ export default function GraphCanvas({
         if (link.arrows !== "one" && link.arrows !== "both") return;
         const src = typeof link.source === "object" ? link.source as GraphNode : nodeById.get(String(link.source));
         const tgt = typeof link.target === "object" ? link.target as GraphNode : nodeById.get(String(link.target));
-        if (!src || !tgt || src.x == null || src.y == null || tgt.x == null || tgt.y == null) return;
+        if (!src || !tgt || !isShown(src) || !isShown(tgt) || src.x == null || src.y == null || tgt.x == null || tgt.y == null) return;
         const e = linkEnds(link);
         const amount = pulseAmountForLink(link);
         const hot = link.id === selectedLinkId || selectedSet.has(e.source) || selectedSet.has(e.target);
@@ -1342,6 +1349,7 @@ export default function GraphCanvas({
         }
       }}
       nodePointerAreaPaint={(node, color, ctx, globalScale) => {
+        if (!isShown(node)) return;
         ctx.fillStyle = color;
         const nodeScale = viewScale(settings.enlarge);
         const cardScale = viewScale(settings.cardScale, nodeScale);
@@ -1362,6 +1370,7 @@ export default function GraphCanvas({
         }
       }}
       nodeCanvasObject={(node, ctx, globalScale) => {
+        if (!isShown(node)) return;
         const x = node.x ?? 0;
         const y = node.y ?? 0;
         const border = nodeColor(node, settings.colorBy);

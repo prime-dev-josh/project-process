@@ -7,7 +7,7 @@ export type WorkflowStatus = "done" | "in_progress" | "incomplete";
 /** Canonical node colors — every node renders as one of these three. */
 export const STATUS_COLORS: Record<WorkflowStatus, string> = {
   done: "#4ade80",
-  in_progress: "#fb923c",
+  in_progress: "#f5b400",
   incomplete: "#f87171",
 };
 
@@ -20,7 +20,7 @@ export const WORKFLOW_STATUS_META: {
   pillText: string;
 }[] = [
   { id: "done", label: "Done", filterLabel: "Done", pillBg: "#86efac", pillText: "#14532d" },
-  { id: "in_progress", label: "In progress", filterLabel: "WIP", pillBg: "#fdba74", pillText: "#7c2d12" },
+  { id: "in_progress", label: "In progress", filterLabel: "WIP", pillBg: "#fde68a", pillText: "#713f12" },
   { id: "incomplete", label: "Incomplete", filterLabel: "I", pillBg: "#fca5a5", pillText: "#7f1d1d" },
 ];
 
@@ -33,6 +33,9 @@ const PAINT_TO_STATUS: Record<string, WorkflowStatus> = {
   "#fb923c": "in_progress",
   "#fdba74": "in_progress",
   "#f59e0b": "in_progress",
+  "#f5b400": "in_progress",
+  "#fbbf24": "in_progress",
+  "#fde68a": "in_progress",
   "#5b9bd5": "incomplete",
   "#8b5cf6": "incomplete",
   "#f87171": "incomplete",

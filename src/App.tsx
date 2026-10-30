@@ -633,26 +633,14 @@ export default function App() {
     if (a?.x != null && a.y != null && b?.x != null && b.y != null) centerOn((a.x + b.x) / 2, (a.y + b.y) / 2);
   }
 
-  const fitGraph = useCallback(() => {
-    const fg = graphRef.current as
-      | (GraphHandle & {
-          centerAt?: (x: number, y: number, ms?: number) => void;
-          zoom?: (k?: number, ms?: number) => number;
-        })
-      | undefined;
-    if (!fg || !size.w || !size.h) return;
-
+  const visibleNodeBounds = useCallback(() => {
     const filterOptions = { statusFilters, employeeEmail: employeeFilter, groupIds: groupFilters };
     const toFit = nodes.filter((n) => {
       if (typeof n.x !== "number" || typeof n.y !== "number") return false;
       if (hideFiltered && !isFiltered(n, search, settings.colorBy, filterOptions)) return false;
       return true;
     });
-
-    if (!toFit.length) {
-      showToast("Nothing to fit — clear search or filters");
-      return;
-    }
+    if (!toFit.length) return null;
 
     let minX = Infinity;
     let maxX = -Infinity;
@@ -664,18 +652,68 @@ export default function App() {
       minY = Math.min(minY, n.y!);
       maxY = Math.max(maxY, n.y!);
     }
-
     const pad = 72;
     const bboxW = Math.max(maxX - minX, 48);
     const bboxH = Math.max(maxY - minY, 48);
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
-    const k = Math.min((size.w - pad * 2) / bboxW, (size.h - pad * 2) / bboxH, 8);
-    const zoomK = Math.max(0.12, k);
-
-    fg.centerAt?.(cx, cy, 400);
-    window.setTimeout(() => fg.zoom?.(zoomK, 400), 0);
+    const fitZoom = Math.max(
+      0.12,
+      Math.min((size.w - pad * 2) / bboxW, (size.h - pad * 2) / bboxH, 8),
+    );
+    return { cx, cy, fitZoom };
   }, [nodes, size.w, size.h, hideFiltered, search, settings.colorBy, statusFilters, employeeFilter, groupFilters]);
+
+  const fitGraph = useCallback(() => {
+    const fg = graphRef.current as
+      | (GraphHandle & {
+          centerAt?: (x: number, y: number, ms?: number) => void;
+          zoom?: (k?: number, ms?: number) => number;
+        })
+      | undefined;
+    const bounds = visibleNodeBounds();
+    if (!fg || !bounds) {
+      if (!bounds) showToast("Nothing to fit — clear search or filters");
+      return;
+    }
+    fg.centerAt?.(bounds.cx, bounds.cy, 400);
+    window.setTimeout(() => fg.zoom?.(bounds.fitZoom, 400), 0);
+  }, [visibleNodeBounds]);
+
+  /** After filter changes: pan (and zoom out only if needed). Never zoom in tighter than the current view. */
+  const ensureFilteredVisible = useCallback(() => {
+    const fg = graphRef.current as
+      | (GraphHandle & {
+          centerAt?: (x: number, y: number, ms?: number) => void;
+          zoom?: (k?: number, ms?: number) => number;
+        })
+      | undefined;
+    const bounds = visibleNodeBounds();
+    if (!fg || !bounds) return;
+    const current = fg.zoom?.();
+    if (current == null || !Number.isFinite(current)) return;
+    const nextZoom = Math.min(current, bounds.fitZoom);
+    if (Math.abs(nextZoom - current) > 1e-4) {
+      window.setTimeout(() => fg.zoom?.(nextZoom, 400), 0);
+    }
+    fg.centerAt?.(bounds.cx, bounds.cy, 400);
+  }, [visibleNodeBounds]);
+
+  const clearFilters = useCallback(() => {
+    setSearch("");
+    setStatusFilters([]);
+    setEmployeeFilter(null);
+    setGroupFilters([]);
+  }, []);
+
+  const filterViewKey = `${statusFilters.join(",")}|${employeeFilter ?? ""}|${groupFilters.join(",")}|${search.trim() ? "q" : ""}`;
+  const ensureFilteredVisibleRef = useRef(ensureFilteredVisible);
+  ensureFilteredVisibleRef.current = ensureFilteredVisible;
+  useEffect(() => {
+    if (!fittedOnce.current) return;
+    const timer = window.setTimeout(() => ensureFilteredVisibleRef.current(), 40);
+    return () => window.clearTimeout(timer);
+  }, [filterViewKey]);
 
   useEffect(() => {
     if (!nodes.length || size.w < 200) return;
@@ -820,6 +858,7 @@ export default function App() {
               onStatusFilters={setStatusFilters}
               onEmployeeFilter={setEmployeeFilter}
               onGroupFilters={setGroupFilters}
+              onClearFilters={clearFilters}
               onSettings={patchSettings}
               onResetSettings={() => setSettings(DEFAULT_SETTINGS)}
               onFit={fitGraph}
