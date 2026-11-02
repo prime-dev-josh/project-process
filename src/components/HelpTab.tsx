@@ -236,7 +236,7 @@ export default function HelpTab() {
         <h3 className={cx(sideH2, "mb-1.5")}>Keys</h3>
         <div className="space-y-1.5 rounded-[10px] border border-[var(--line)] px-2.5 py-2">
           <p className="m-0 flex items-center justify-between gap-2 text-[11px] text-[var(--muted)]">
-            <span>Cancel / clear</span>
+            <span>Cancel place, link, or highlight flow; otherwise clear selection</span>
             <Key>Esc</Key>
           </p>
           <p className="m-0 flex items-center justify-between gap-2 text-[11px] text-[var(--muted)]">

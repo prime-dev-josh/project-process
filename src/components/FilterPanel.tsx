@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   WORKFLOW_STATUS_META,
   personAssignmentStats,
@@ -10,8 +10,10 @@ import { users } from "../data/users";
 import { matchingPhysicsPreset, PHYSICS_PRESETS, type PhysicsPresetId } from "../graph/viewSettings";
 import { cx, field, sideH2 } from "../styles";
 import type { ColorBy, GraphGroup, GraphNode, GraphSettings } from "../types";
+import { isFiltered } from "../graph/visibility";
 import GroupFilterPicker from "./GroupFilterPicker";
 import PersonFace from "./PersonFace";
+import PersonFilterPicker from "./PersonFilterPicker";
 import SegmentedControl from "./SegmentedControl";
 import SliderField from "./SliderField";
 
@@ -64,8 +66,29 @@ export default function FilterPanel({
 }: Props) {
   const stats = useMemo(() => workflowStats(nodes, colorBy), [nodes, colorBy]);
   const [advanced, setAdvanced] = useState(false);
+  const personRowProbeRef = useRef<HTMLDivElement>(null);
+  const [personRowCompact, setPersonRowCompact] = useState(false);
   const hasFilters =
     Boolean(search.trim()) || statusFilters.length > 0 || employeeFilter != null || groupFilters.length > 0;
+  const filterOptions = useMemo(
+    () => ({ statusFilters, employeeEmail: employeeFilter, groupIds: groupFilters }),
+    [statusFilters, employeeFilter, groupFilters],
+  );
+  const matchingNodeCount = useMemo(
+    () => nodes.filter((node) => isFiltered(node, search, colorBy, filterOptions)).length,
+    [nodes, search, colorBy, filterOptions],
+  );
+  const filtersHideAll = hasFilters && nodes.length > 0 && matchingNodeCount === 0;
+
+  useEffect(() => {
+    const probe = personRowProbeRef.current;
+    if (!probe) return;
+    const measure = () => setPersonRowCompact(probe.scrollHeight > 40);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(probe);
+    return () => ro.disconnect();
+  }, [users.length]);
 
   return (
     <div className="filter-panel space-y-2.5 pt-0.5">
@@ -130,34 +153,65 @@ export default function FilterPanel({
             );
           })}
         </div>
-        <div className="mt-2 flex flex-wrap gap-1.5" aria-label="People">
-          <PersonBall
-            label="Unassigned"
-            active={employeeFilter === "__unassigned__"}
-            pct={0}
-            onClick={() => onEmployeeFilter(employeeFilter === "__unassigned__" ? null : "__unassigned__")}
+        <div className="relative mt-2">
+          <div
+            ref={personRowProbeRef}
+            className="pointer-events-none absolute inset-x-0 top-0 -z-10 flex flex-wrap gap-1.5 opacity-0"
+            aria-hidden
           >
-            <svg className="size-3.5 text-[var(--muted)]" viewBox="0 0 24 24" aria-hidden>
-              <circle cx="12" cy="8" r="4" fill="currentColor" />
-              <path d="M4 20c0-4 4-6 8-6s8 2 8 6" fill="currentColor" />
-            </svg>
-          </PersonBall>
-          {users.map((user) => {
-            const { total, pct } = personAssignmentStats(nodes, colorBy, user.email);
-            const active = employeeFilter === user.email;
-            return (
-              <PersonBall
-                key={user.objectId}
-                label={`${user.name} — ${pct}% done (${total} assigned)`}
-                active={active}
-                pct={pct}
-                onClick={() => onEmployeeFilter(active ? null : user.email)}
-              >
+            <PersonBall label="Unassigned" active={false} pct={0} onClick={() => {}}>
+              <svg className="size-3.5 text-[var(--muted)]" viewBox="0 0 24 24" aria-hidden>
+                <circle cx="12" cy="8" r="4" fill="currentColor" />
+                <path d="M4 20c0-4 4-6 8-6s8 2 8 6" fill="currentColor" />
+              </svg>
+            </PersonBall>
+            {users.map((user) => (
+              <PersonBall key={user.objectId} label="" active={false} pct={0} onClick={() => {}}>
                 <PersonFace name={user.name} email={user.email} />
               </PersonBall>
-            );
-          })}
+            ))}
+          </div>
+          {personRowCompact ? (
+            <PersonFilterPicker
+              nodes={nodes}
+              colorBy={colorBy}
+              selected={employeeFilter}
+              onChange={onEmployeeFilter}
+            />
+          ) : (
+            <div className="flex flex-wrap gap-1.5" aria-label="People">
+              <PersonBall
+                label="Unassigned"
+                active={employeeFilter === "__unassigned__"}
+                pct={0}
+                onClick={() => onEmployeeFilter(employeeFilter === "__unassigned__" ? null : "__unassigned__")}
+              >
+                <svg className="size-3.5 text-[var(--muted)]" viewBox="0 0 24 24" aria-hidden>
+                  <circle cx="12" cy="8" r="4" fill="currentColor" />
+                  <path d="M4 20c0-4 4-6 8-6s8 2 8 6" fill="currentColor" />
+                </svg>
+              </PersonBall>
+              {users.map((user) => {
+                const { total, pct } = personAssignmentStats(nodes, colorBy, user.email);
+                const active = employeeFilter === user.email;
+                return (
+                  <PersonBall
+                    key={user.objectId}
+                    label={`${user.name} — ${pct}% done (${total} assigned)`}
+                    active={active}
+                    pct={pct}
+                    onClick={() => onEmployeeFilter(active ? null : user.email)}
+                  >
+                    <PersonFace name={user.name} email={user.email} />
+                  </PersonBall>
+                );
+              })}
+            </div>
+          )}
         </div>
+        {filtersHideAll ? (
+          <p className="mt-2 mb-0 text-[11px] leading-snug text-[var(--muted)]">No nodes match the current filters.</p>
+        ) : null}
         {groups.length ? (
           <div className="mt-2">
             <p className="mb-1 text-[10px] font-semibold tracking-wide text-[var(--muted)] uppercase">Groups</p>

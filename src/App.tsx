@@ -88,6 +88,7 @@ export default function App() {
   const [statusFilters, setStatusFilters] = useState<WorkflowStatus[]>([]);
   const [employeeFilter, setEmployeeFilter] = useState<string | null>(null);
   const [groupFilters, setGroupFilters] = useState<string[]>([]);
+  /** Session-only flow highlight; never written to map storage or SQL. */
   const [highlightOriginId, setHighlightOriginId] = useState<string | null>(null);
   const [draftPrompt, setDraftPrompt] = useState<{ proceed: () => void } | null>(null);
   const hideFiltered =
@@ -300,6 +301,14 @@ export default function App() {
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
       if (e.key === "Escape") {
         if (editLocked || draftPrompt) return;
+        if (connect || placing) {
+          guardDraft(clearInteraction);
+          return;
+        }
+        if (highlightOriginId) {
+          setHighlightOriginId(null);
+          return;
+        }
         guardDraft(clearInteraction);
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
@@ -1038,7 +1047,7 @@ export default function App() {
 
         <ViewCompass degrees={viewRotation} onChange={setViewRotation} onHoldChange={setViewSpinning} />
 
-        {(placing || connect || selectedIds.length > 1) && (
+        {(placing || connect || highlightOriginId || selectedIds.length > 1) && (
           <div className="absolute top-3 left-1/2 z-[8] -translate-x-1/2 rounded-full bg-[rgba(27,58,107,0.92)] px-3 py-1.5 text-xs font-bold tracking-wide text-[#f3f2f1]">
             {placing
               ? "Click to place a node · Esc to cancel"
@@ -1046,7 +1055,9 @@ export default function App() {
                 ? "Click the next node · Esc to cancel"
                 : connect
                   ? "Click the first node · Esc to cancel"
-                  : `${selectedIds.length} selected · Drag a selected node to move · − removes one · Esc to clear`}
+                  : highlightOriginId
+                    ? "Highlighting flow · Esc to clear"
+                    : `${selectedIds.length} selected · Drag a selected node to move · − removes one · Esc to clear`}
           </div>
         )}
 
