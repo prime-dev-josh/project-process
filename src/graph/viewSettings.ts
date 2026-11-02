@@ -9,12 +9,32 @@ export const VIEW_SETTING_KEYS = [
   "colorBy",
   "cardInfo",
   "showText",
-  "pulse",
-  "pulseSpeed",
   "enlarge",
   "textScale",
   "cardScale",
 ] as const;
+
+export const PHYSICS_PRESETS = {
+  tight: { charge: -90, linkDistance: 52, collide: 8 },
+  balanced: { charge: -160, linkDistance: 72, collide: 12 },
+  loose: { charge: -240, linkDistance: 110, collide: 18 },
+} as const;
+
+export type PhysicsPresetId = keyof typeof PHYSICS_PRESETS;
+
+export function matchingPhysicsPreset(settings: Pick<GraphSettings, "charge" | "linkDistance" | "collide">): PhysicsPresetId | null {
+  for (const id of Object.keys(PHYSICS_PRESETS) as PhysicsPresetId[]) {
+    const preset = PHYSICS_PRESETS[id];
+    if (
+      settings.charge === preset.charge &&
+      settings.linkDistance === preset.linkDistance &&
+      settings.collide === preset.collide
+    ) {
+      return id;
+    }
+  }
+  return null;
+}
 
 export type ViewSettingKey = (typeof VIEW_SETTING_KEYS)[number];
 

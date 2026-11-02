@@ -6,9 +6,6 @@ export type Capsule = { a: Point; b: Point; r: number };
 /** World-space halo around members and intra-group links. Tight enough that a nearby ungrouped node stays outside. */
 export const GROUP_MEMBRANE_PAD = 10;
 
-/** Extra screen-px around each member so the stroke clears the ring without swallowing neighbors. */
-export const GROUP_MEMBRANE_SCREEN_PAD = 8;
-
 /** Link corridor as a fraction of the thinner member disk. */
 export const GROUP_LINK_CAPSULE = 0.58;
 
@@ -43,6 +40,37 @@ export function convexHull(points: Point[]): Point[] {
   lower.pop();
   upper.pop();
   return lower.concat(upper);
+}
+
+/** Push a CCW convex loop outward by `pad` so a stroke sits around member disks. */
+export function offsetConvexHull(points: Point[], pad: number): Point[] {
+  if (points.length < 3) return points.slice();
+  if (pad === 0) return points.slice();
+  const n = points.length;
+  const out: Point[] = [];
+  for (let i = 0; i < n; i += 1) {
+    const prev = points[(i + n - 1) % n];
+    const cur = points[i];
+    const next = points[(i + 1) % n];
+    const ax = cur.x - prev.x;
+    const ay = cur.y - prev.y;
+    const bx = next.x - cur.x;
+    const by = next.y - cur.y;
+    const al = Math.hypot(ax, ay) || 1;
+    const bl = Math.hypot(bx, by) || 1;
+    const n1x = -ay / al;
+    const n1y = ax / al;
+    const n2x = -by / bl;
+    const n2y = bx / bl;
+    let nx = n1x + n2x;
+    let ny = n1y + n2y;
+    const nl = Math.hypot(nx, ny) || 1;
+    nx /= nl;
+    ny /= nl;
+    const miter = Math.min(4, 1 / Math.max(0.25, n1x * nx + n1y * ny));
+    out.push({ x: cur.x + nx * pad * miter, y: cur.y + ny * pad * miter });
+  }
+  return out;
 }
 
 function distToSeg(px: number, py: number, ax: number, ay: number, bx: number, by: number) {
@@ -242,12 +270,29 @@ function fieldBounds(disks: Disk[], capsules: Capsule[], extra: number) {
   return { minX, minY, maxX, maxY, minR: Number.isFinite(minR) ? minR : extra };
 }
 
+/** World-space disk used for membranes and exclusion. Independent of camera zoom. */
+export function groupMemberRadius(
+  node: { size?: number; level?: number },
+  enlarge = 1,
+) {
+  const size = Number.isFinite(node.size) ? (node.size as number) : 1;
+  const level = Number.isFinite(node.level) ? (node.level as number) : 2;
+  const body = (2.7 + size * 2 + Math.max(0, 2.1 - level * 0.32)) * enlarge;
+  return body + GROUP_MEMBRANE_PAD;
+}
+
+function contourCellSize(minR: number, spanX: number, spanY: number) {
+  const detail = Math.max(minR * 0.4, 6);
+  const budget = 72;
+  return Math.max(detail, spanX / budget, spanY / budget);
+}
+
 function fieldContours(self: GroupFieldSpec, others: GroupFieldSpec[] = []): Point[][] {
   const margin = Math.max(self.blend * 0.7, 8);
   const { minX, minY, maxX, maxY, minR } = fieldBounds(self.disks, self.capsules, margin);
   const spanX = Math.max(maxX - minX, 1);
   const spanY = Math.max(maxY - minY, 1);
-  const cell = Math.max(Math.min(minR / 2, 16), Math.max(spanX, spanY) / 52, 4);
+  const cell = contourCellSize(minR, spanX, spanY);
   const cols = Math.max(2, Math.ceil(spanX / cell));
   const rows = Math.max(2, Math.ceil(spanY / cell));
   const values: number[][] = [];

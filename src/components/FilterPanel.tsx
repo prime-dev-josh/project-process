@@ -7,10 +7,13 @@ import {
   type WorkflowStatus,
 } from "../graph/workflowStatus";
 import { users } from "../data/users";
-import { cx, field, sideH2, toolBtn, toolBtnOn } from "../styles";
+import { matchingPhysicsPreset, PHYSICS_PRESETS, type PhysicsPresetId } from "../graph/viewSettings";
+import { cx, field, sideH2 } from "../styles";
 import type { ColorBy, GraphGroup, GraphNode, GraphSettings } from "../types";
 import GroupFilterPicker from "./GroupFilterPicker";
 import PersonFace from "./PersonFace";
+import SegmentedControl from "./SegmentedControl";
+import SliderField from "./SliderField";
 
 type Props = {
   nodes: GraphNode[];
@@ -36,37 +39,6 @@ type Props = {
 
 function toggleStatus(list: WorkflowStatus[], status: WorkflowStatus) {
   return list.includes(status) ? list.filter((s) => s !== status) : [...list, status];
-}
-
-function SliderRow({
-  label,
-  min,
-  max,
-  step,
-  value,
-  onChange,
-}: {
-  label: string;
-  min: number;
-  max: number;
-  step: number;
-  value: number;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <label className="my-1 flex items-center justify-between gap-2 text-[11px] text-[var(--muted)]">
-      <span>{label}</span>
-      <input
-        className="h-1 w-[88px] accent-[var(--accent)]"
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-      />
-    </label>
-  );
 }
 
 export default function FilterPanel({
@@ -203,64 +175,32 @@ export default function FilterPanel({
       <section className="border-t border-[var(--line)] pt-2 pb-0.5">
         <h2 className={cx(sideH2, "mb-1.5")}>View</h2>
         <p className="mb-1 text-[10px] font-semibold tracking-wide text-[var(--muted)] uppercase">Map</p>
-        <div className="grid grid-cols-3 gap-1">
-          <button type="button" className={cx(toolBtn, "min-w-0 px-1.5")} title="Fit the graph in the window" onClick={onFit}>
-            Fit
-          </button>
-          <button type="button" className={cx(toolBtn, "min-w-0 px-1.5")} title="Spread nodes with physics" onClick={onReorg}>
-            Reorg
-          </button>
-          <button
-            type="button"
-            className={cx(settings.physics ? toolBtnOn : toolBtn, "min-w-0 px-1.5")}
-            aria-pressed={settings.physics}
-            title="Let nodes move and settle"
-            onClick={onTogglePhysics}
-          >
-            Physics
-          </button>
-        </div>
+        <SegmentedControl
+          options={[
+            { id: "fit", label: "Fit", title: "Fit the graph in the window" },
+            { id: "reorg", label: "Reorg", title: "Spread nodes with physics" },
+            { id: "physics", label: "Physics", title: "Let nodes move and settle" },
+          ]}
+          pressed={settings.physics ? (["physics"] as const) : []}
+          onSelect={(id) => {
+            if (id === "fit") onFit();
+            else if (id === "reorg") onReorg();
+            else onTogglePhysics();
+          }}
+        />
         <p className="mt-2 mb-1 text-[10px] font-semibold tracking-wide text-[var(--muted)] uppercase">Look</p>
-        <div className="grid grid-cols-3 gap-1">
-          <button
-            type="button"
-            className={cx(settings.showText ? toolBtnOn : toolBtn, "min-w-0 px-1.5")}
-            aria-pressed={settings.showText}
-            title="Show or hide node titles"
-            onClick={() => onSettings({ showText: !settings.showText })}
-          >
-            Text
-          </button>
-          <button
-            type="button"
-            className={cx(settings.cardInfo ? toolBtnOn : toolBtn, "min-w-0 px-1.5")}
-            aria-pressed={Boolean(settings.cardInfo)}
-            title="Show info cards when zoomed in"
-            onClick={onToggleCards}
-          >
-            Cards
-          </button>
-          <button
-            type="button"
-            className={cx(settings.pulse ? toolBtnOn : toolBtn, "min-w-0 px-1.5")}
-            aria-pressed={Boolean(settings.pulse)}
-            title="Pulse connections outward from the core node"
-            onClick={() => onSettings({ pulse: !settings.pulse })}
-          >
-            Pulse
-          </button>
-        </div>
-        {settings.pulse ? (
-          <SliderRow
-            label="Speed"
-            min={0.25}
-            max={2.2}
-            step={0.05}
-            value={settings.pulseSpeed ?? 0.7}
-            onChange={(pulseSpeed) => onSettings({ pulseSpeed })}
-          />
-        ) : null}
-        <SliderRow
+        <SegmentedControl
+          options={[
+            { id: "text", label: "Text", title: "Show or hide node titles" },
+            { id: "cards", label: "Cards", title: "Show info cards when zoomed in" },
+          ]}
+          pressed={[...(settings.showText ? (["text"] as const) : []), ...(settings.cardInfo ? (["cards"] as const) : [])]}
+          onSelect={(id) => {
+            if (id === "text") onSettings({ showText: !settings.showText });
+            else onToggleCards();
+          }}
+        />
+        <SliderField
           label="Node"
           min={1}
           max={4}
@@ -268,7 +208,7 @@ export default function FilterPanel({
           value={settings.enlarge ?? 1}
           onChange={(enlarge) => onSettings({ enlarge })}
         />
-        <SliderRow
+        <SliderField
           label="Text"
           min={0.7}
           max={1.8}
@@ -276,7 +216,7 @@ export default function FilterPanel({
           value={settings.textScale ?? settings.enlarge ?? 1}
           onChange={(textScale) => onSettings({ textScale })}
         />
-        <SliderRow
+        <SliderField
           label="Card"
           min={0.7}
           max={1.8}
@@ -308,31 +248,32 @@ export default function FilterPanel({
         {advanced && settings.physics ? (
           <div className="mt-1.5">
             <p className="mb-1 text-[10px] font-semibold tracking-wide text-[var(--muted)] uppercase">Forces</p>
-            <label className="my-1 flex items-center justify-between gap-2 text-[11px] text-[var(--muted)]">
-              <span>Gravity</span>
-              <input
-                type="checkbox"
-                checked={settings.radial}
-                onChange={(e) => onSettings({ radial: e.target.checked })}
-              />
-            </label>
-            <SliderRow
+            <SegmentedControl
+              options={[
+                { id: "tight", label: "Tight", title: "Keep clusters close" },
+                { id: "balanced", label: "Balanced", title: "Everyday spacing" },
+                { id: "loose", label: "Loose", title: "More air between nodes" },
+              ]}
+              value={matchingPhysicsPreset(settings)}
+              onSelect={(id: PhysicsPresetId) => onSettings({ ...PHYSICS_PRESETS[id] })}
+            />
+            <SliderField
               label="Spread"
-              min={40}
-              max={420}
+              min={60}
+              max={300}
               step={10}
               value={-settings.charge}
               onChange={(spread) => onSettings({ charge: -spread })}
             />
-            <SliderRow
-              label="Spacing"
+            <SliderField
+              label="Link length"
               min={20}
               max={200}
               step={4}
               value={settings.linkDistance}
               onChange={(linkDistance) => onSettings({ linkDistance })}
             />
-            <SliderRow
+            <SliderField
               label="Padding"
               min={0}
               max={30}

@@ -22,6 +22,7 @@ import { UNGROUPED_FILTER, groupTitle, pruneEmptyGroups } from "./graph/groups";
 import { addChild, addLink, blankNode, deleteNode, insertNodeBetween } from "./graph/ops";
 import { mergeViewSettings } from "./graph/viewSettings";
 import { degToRad, rotatePoint, viewCoverOffset } from "./graph/viewRotation";
+import { directedFlowFrom } from "./graph/flow";
 import { isFiltered, linkEnds } from "./graph/visibility";
 import { useMapSync } from "./hooks/useMapSync";
 import { selectionPanelPlacement } from "./lib/floatPanelPlacement";
@@ -87,6 +88,7 @@ export default function App() {
   const [statusFilters, setStatusFilters] = useState<WorkflowStatus[]>([]);
   const [employeeFilter, setEmployeeFilter] = useState<string | null>(null);
   const [groupFilters, setGroupFilters] = useState<string[]>([]);
+  const [highlightOriginId, setHighlightOriginId] = useState<string | null>(null);
   const [draftPrompt, setDraftPrompt] = useState<{ proceed: () => void } | null>(null);
   const hideFiltered =
     Boolean(search.trim()) || statusFilters.length > 0 || employeeFilter != null || groupFilters.length > 0;
@@ -109,6 +111,15 @@ export default function App() {
   const [editVisual, setEditVisual] = useState<NodeEditPreview | null>(null);
 
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+  const highlightFlow = useMemo(() => {
+    if (!highlightOriginId) return null;
+    if (!nodeById.has(highlightOriginId)) return null;
+    return directedFlowFrom(highlightOriginId, links);
+  }, [highlightOriginId, links, nodeById]);
+  const highlightIds = useMemo(
+    () => (highlightFlow ? [...highlightFlow.hops.keys()] : null),
+    [highlightFlow],
+  );
   const editing = editingId ? nodeById.get(editingId) ?? null : null;
   const editingLink = links.find((l) => l.id === editingLinkId) ?? null;
 
@@ -918,6 +929,8 @@ export default function App() {
             employeeFilter={employeeFilter}
             groupFilters={groupFilters}
             hideFiltered={hideFiltered}
+            highlightIds={highlightIds}
+            highlightFlow={highlightFlow}
             theme={theme}
             rotation={degToRad(viewRotation)}
             uprightText={!viewSpinning}
@@ -980,6 +993,7 @@ export default function App() {
                 return;
               }
               setMenu(null);
+              setHighlightOriginId(null);
               guardDraft(() => {
                 dismissEditPanel();
                 dismissPreview();
@@ -1077,8 +1091,13 @@ export default function App() {
             x={menu.x}
             y={menu.y}
             accent={nodeColor(ctxNode, settings.colorBy)}
+            flowHighlighted={highlightOriginId === menu.id}
             onAddNode={(size) => startPlace(menu.id, size)}
             onLink={(arrows) => startLink(arrows, menu.id)}
+            onHighlightFlow={() => {
+              setHighlightOriginId((prev) => (prev === menu.id ? null : menu.id));
+              setMenu(null);
+            }}
             onDelete={() => removeNode(menu.id, false)}
             onDeleteBranch={() => removeNode(menu.id, true)}
           />

@@ -8,9 +8,9 @@ import { groupStatusColor } from "../graph/groups";
 import {
   GROUP_LINK_CAPSULE,
   GROUP_MEMBRANE_PAD,
-  GROUP_MEMBRANE_SCREEN_PAD,
   cellHulls,
   groupFieldBlend,
+  groupMemberRadius,
   forceGroupExclusion,
   hullApex,
   pointInCell,
@@ -20,9 +20,16 @@ import {
   type GroupFieldBody,
 } from "../graph/groupHull";
 import { employeeInitials } from "../graph/employee";
-import { findOriginId, hopDistances, hopGlow, pulseAmountOnLink, pulseFront, pulseHalo, pulseStroke } from "../graph/pulse";
 import { findSelfIntersection, lassoRegion, pointInPolygon, type Point } from "../graph/lasso";
 import { rotatePoint, viewCoverOffset } from "../graph/viewRotation";
+import { type DirectedFlow, isFlowLink } from "../graph/flow";
+import {
+  FLOW_HIGHLIGHT_PULSE_SPEED,
+  pulseAmountOnLink,
+  pulseFront,
+  pulseHalo,
+  pulseStroke,
+} from "../graph/pulse";
 import { isFiltered, linkEnds } from "../graph/visibility";
 import { STATUS_COLORS, type WorkflowStatus } from "../graph/workflowStatus";
 import { loadPersonPhoto } from "../lib/personPhoto";
@@ -52,6 +59,8 @@ type Props = {
   employeeFilter: string | null;
   groupFilters: string[];
   hideFiltered: boolean;
+  highlightIds?: string[] | null;
+  highlightFlow?: DirectedFlow | null;
   theme: "light" | "dark";
   rotation?: number;
   uprightText?: boolean;
@@ -140,6 +149,8 @@ function groupLinkCapsules(
     if (!a || !b || a.x == null || a.y == null || b.x == null || b.y == null) continue;
     const ra = diskById.get(a.id)?.r ?? GROUP_MEMBRANE_PAD;
     const rb = diskById.get(b.id)?.r ?? GROUP_MEMBRANE_PAD;
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len > (ra + rb) * 2.1) continue;
     capsules.push({
       a: { x: a.x, y: a.y },
       b: { x: b.x, y: b.y },
@@ -150,10 +161,10 @@ function groupLinkCapsules(
 }
 
 function groupFieldBodies(
-  live: Array<{ id: string; groupId?: string | null; x?: number; y?: number; size?: number }>,
+  live: Array<{ id: string; groupId?: string | null; x?: number; y?: number; size?: number; level?: number }>,
   links: GraphLink[],
   groups: GraphGroup[],
-  pad: number,
+  enlarge: number,
 ): GroupFieldBody[] {
   const membersByGroup = new Map<string, typeof live>();
   for (const node of live) {
@@ -169,7 +180,7 @@ function groupFieldBodies(
     const disks: Disk[] = members.map((n) => ({
       x: n.x as number,
       y: n.y as number,
-      r: pad + (n.size ?? 1) * 8,
+      r: groupMemberRadius(n, enlarge),
     }));
     const capsules = groupLinkCapsules(members, links, disks);
     const blend = groupFieldBlend(disks);
@@ -374,6 +385,8 @@ export default function GraphCanvas({
   employeeFilter,
   groupFilters = [],
   hideFiltered,
+  highlightIds = null,
+  highlightFlow = null,
   theme,
   rotation = 0,
   uprightText = true,
@@ -444,6 +457,41 @@ export default function GraphCanvas({
     return isFiltered(node, search, settings.colorBy, filterOptions);
   }
 
+  const highlightSet = useMemo(
+    () => (highlightIds?.length ? new Set(highlightIds) : null),
+    [highlightIds],
+  );
+
+  function isFlowDim(node: GraphNode | undefined) {
+    if (!highlightSet || !node) return false;
+    return !highlightSet.has(node.id);
+  }
+
+  function isFlowLinkDim(link: GraphLink) {
+    if (!highlightFlow) return false;
+    return !isFlowLink(link, highlightFlow.hops);
+  }
+
+  const flowPulseAt = useRef(0);
+  useEffect(() => {
+    if (!highlightFlow) return;
+    let frame = 0;
+    const tick = (now: number) => {
+      flowPulseAt.current = now;
+      graphRef.current?.resumeAnimation?.();
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    graphRef.current?.resumeAnimation?.();
+    return () => cancelAnimationFrame(frame);
+  }, [highlightFlow, graphRef]);
+
+  function flowPulseAmount(link: GraphLink) {
+    if (!highlightFlow || !isFlowLink(link, highlightFlow.hops)) return 0;
+    const front = pulseFront(flowPulseAt.current, FLOW_HIGHLIGHT_PULSE_SPEED, highlightFlow.maxHop);
+    return pulseAmountOnLink(link, highlightFlow.hops, front, highlightFlow.maxHop);
+  }
+
   const photosRef = useRef(new Map<string, HTMLImageElement>());
   const photoAsked = useRef(new Set<string>());
   const [, setPhotoGen] = useState(0);
@@ -463,34 +511,6 @@ export default function GraphCanvas({
       });
     }
   }, [graphData.nodes]);
-
-  const pulseHops = useMemo(() => {
-    if (!settings.pulse) return null;
-    const origin = findOriginId(graphData.nodes);
-    if (!origin) return null;
-    const hops = hopDistances(graphData.nodes, graphData.links, origin);
-    let maxHop = 0;
-    for (const hop of hops.values()) if (hop > maxHop) maxHop = hop;
-    return { hops, maxHop, origin };
-  }, [settings.pulse, graphData]);
-
-  const pulseAt = useRef(0);
-  useEffect(() => {
-    if (!settings.pulse) return;
-    let frame = 0;
-    const tick = (now: number) => {
-      pulseAt.current = now;
-      frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [settings.pulse]);
-
-  function pulseAmountForLink(link: GraphLink) {
-    if (!pulseHops) return 0;
-    const front = pulseFront(pulseAt.current, settings.pulseSpeed ?? 0.7, pulseHops.maxHop);
-    return pulseAmountOnLink(link, pulseHops.hops, front, pulseHops.maxHop);
-  }
 
   useEffect(() => {
     if (!placeArmed) return;
@@ -535,7 +555,7 @@ export default function GraphCanvas({
       "groupField",
       settings.physics
         ? (forceGroupExclusion(
-            (live) => groupFieldBodies(live, links, groups, GROUP_MEMBRANE_PAD),
+            (live) => groupFieldBodies(live, links, groups, viewScale(settings.enlarge)),
             (node) => settings.collide + (node.size ?? 1) * 8,
           ) as never)
         : null,
@@ -610,7 +630,7 @@ export default function GraphCanvas({
       if (node.x == null || node.y == null) continue;
       if (!isShown(node)) continue;
       const matched = isFiltered(node, search, settings.colorBy, filterOptions);
-      const dim = !matched;
+      const dim = !matched || isFlowDim(node);
       const selected = selectedSet.has(node.id);
       const hovered = node.id === hoveredId;
       const connecting = node.id === connectFrom;
@@ -799,11 +819,34 @@ export default function GraphCanvas({
     return { x: minX - p, y: minY - p, w: maxX - minX + p * 2, h: maxY - minY + p * 2 };
   }
 
+  function paintHighlightFlowLinks(ctx: CanvasRenderingContext2D, globalScale: number) {
+    if (!highlightFlow) return;
+    const k = Math.max(globalScale, 1e-4);
+    for (const link of links) {
+      if (isFlowLinkDim(link)) continue;
+      const e = linkEnds(link);
+      const src = liveEngineNodes().find((n) => n.id === e.source) ?? nodeById.get(e.source);
+      const tgt = liveEngineNodes().find((n) => n.id === e.target) ?? nodeById.get(e.target);
+      if (!src || !tgt || src.x == null || src.y == null || tgt.x == null || tgt.y == null) continue;
+      if (!isShown(src) || !isShown(tgt)) continue;
+      const amount = flowPulseAmount(link);
+      if (amount <= 0.08) continue;
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(src.x, src.y);
+      ctx.lineTo(tgt.x, tgt.y);
+      ctx.strokeStyle = pulseHalo(amount, theme);
+      ctx.lineWidth = (6 + amount * 10) / k;
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
   function paintNamedGroups(ctx: CanvasRenderingContext2D, globalScale: number) {
     if (!groups.length) return;
     const enlarge = viewScale(settings.enlarge);
     const k = Math.max(globalScale, 1e-4);
-    const pad = GROUP_MEMBRANE_PAD * 0.35 + GROUP_MEMBRANE_SCREEN_PAD / k;
     const live = liveEngineNodes();
     const membersByGroup = new Map<string, GraphNode[]>();
     for (const node of live) {
@@ -819,7 +862,7 @@ export default function GraphCanvas({
       const disks = members.map((n) => ({
         x: n.x as number,
         y: n.y as number,
-        r: dotRadius(n, globalScale, enlarge) + pad,
+        r: groupMemberRadius(n, enlarge),
       }));
       return [{
         group,
@@ -841,34 +884,32 @@ export default function GraphCanvas({
       ctx.save();
       ctx.fillStyle = withAlpha(color, theme === "dark" ? 0.16 : 0.12);
       ctx.strokeStyle = color;
-      ctx.lineWidth = 2.1 / k;
+      ctx.lineWidth = hovered ? 2.6 / k : 2.1 / k;
       ctx.lineJoin = "round";
       for (const hull of hulls) {
         traceCellPath(ctx, hull);
         ctx.fill();
         ctx.stroke();
       }
-      if (hovered) {
-        const apex = hulls.reduce<ReturnType<typeof hullApex>>((best, hull) => {
-          const tip = hullApex(hull);
-          if (!tip) return best;
-          if (!best || tip.y < best.y) return tip;
-          return best;
-        }, null);
-        const title = group.title.trim() || "Untitled group";
-        inScreenSpace(ctx, apex?.x ?? disks[0].x, apex?.y ?? disks[0].y, globalScale, () => {
-          ctx.font = "700 11px \"Segoe UI\", sans-serif";
-          const w = ctx.measureText(title).width + 14;
-          ctx.fillStyle = withAlpha(color, 0.95);
-          ctx.beginPath();
-          ctx.roundRect(-w / 2, -22, w, 18, 9);
-          ctx.fill();
-          ctx.fillStyle = "#0f172a";
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText(title, 0, -13);
-        }, labelUnrotate());
-      }
+      const apex = hulls.reduce<ReturnType<typeof hullApex>>((best, hull) => {
+        const tip = hullApex(hull);
+        if (!tip) return best;
+        if (!best || tip.y < best.y) return tip;
+        return best;
+      }, null);
+      const title = group.title.trim() || "Untitled group";
+      inScreenSpace(ctx, apex?.x ?? disks[0].x, apex?.y ?? disks[0].y, globalScale, () => {
+        ctx.font = "700 11px \"Segoe UI\", sans-serif";
+        const w = ctx.measureText(title).width + 14;
+        ctx.fillStyle = withAlpha(color, hovered ? 0.98 : 0.95);
+        ctx.beginPath();
+        ctx.roundRect(-w / 2, -22, w, 18, 9);
+        ctx.fill();
+        ctx.fillStyle = "#0f172a";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(title, 0, -13);
+      }, labelUnrotate());
       ctx.restore();
     }
   }
@@ -1083,7 +1124,7 @@ export default function GraphCanvas({
         (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
       }}
       onPointerMove={(e) => {
-        if (placeArmed || connectFrom) cursorGraph.current = graphAtClient(e.clientX, e.clientY);
+        cursorGraph.current = graphAtClient(e.clientX, e.clientY);
         if (!interaction.current) {
           const badge = deselectBadgeAt(e.clientX, e.clientY);
           setOverBadge(badge != null);
@@ -1297,32 +1338,45 @@ export default function GraphCanvas({
         const e = linkEnds(l);
         const src = nodeById.get(e.source);
         const tgt = nodeById.get(e.target);
-        const dim =
+        const filterDim =
           (src && !isFiltered(src, search, settings.colorBy, filterOptions)) ||
           (tgt && !isFiltered(tgt, search, settings.colorBy, filterOptions));
-        if (dim) return palette.linkDim;
-        const amount = pulseAmountForLink(l);
-        if (amount > 0.05) return pulseStroke(amount, theme);
+        if (filterDim || isFlowLinkDim(l)) return palette.linkDim;
+        const pulse = flowPulseAmount(l);
+        if (pulse > 0.05) return pulseStroke(pulse, theme);
+        const onFlow = highlightFlow && isFlowLink(l, highlightFlow.hops);
         const hot = l.id === selectedLinkId || selectedSet.has(e.source) || selectedSet.has(e.target);
-        return hot ? palette.linkHot : palette.link;
+        if (onFlow || hot) return palette.linkHot;
+        return palette.link;
       }}
       linkWidth={(l) => {
         const e = linkEnds(l);
-        const amount = pulseAmountForLink(l);
+        const pulse = flowPulseAmount(l);
+        const onFlow = highlightFlow && isFlowLink(l, highlightFlow.hops);
         const hot = l.id === selectedLinkId || selectedSet.has(e.source) || selectedSet.has(e.target);
-        const base = hot
-          ? theme === "dark" ? 2.1 : 1.5
-          : theme === "dark" ? 1.45 : 0.95;
-        return base + amount * 1.7;
+        const base = onFlow
+          ? theme === "dark" ? 2.55 : 2
+          : hot
+            ? theme === "dark" ? 2.1 : 1.5
+            : theme === "dark" ? 1.45 : 0.95;
+        return base + pulse * 2.4;
       }}
       linkDirectionalArrowLength={0}
       linkDirectionalArrowRelPos={0.82}
       linkDirectionalArrowColor={(l) => {
         const e = linkEnds(l);
-        const amount = pulseAmountForLink(l);
-        if (amount > 0.05) return pulseStroke(amount, theme);
+        const src = nodeById.get(e.source);
+        const tgt = nodeById.get(e.target);
+        const filterDim =
+          (src && !isFiltered(src, search, settings.colorBy, filterOptions)) ||
+          (tgt && !isFiltered(tgt, search, settings.colorBy, filterOptions));
+        if (filterDim || isFlowLinkDim(l)) return palette.linkDim;
+        const pulse = flowPulseAmount(l);
+        if (pulse > 0.05) return pulseStroke(pulse, theme);
+        const onFlow = highlightFlow && isFlowLink(l, highlightFlow.hops);
         const hot = l.id === selectedLinkId || selectedSet.has(e.source) || selectedSet.has(e.target);
-        return hot ? palette.linkHot : palette.link;
+        if (onFlow || hot) return palette.linkHot;
+        return palette.link;
       }}
       linkCanvasObjectMode={(l) => (l.arrows === "one" || l.arrows === "both" ? "after" : undefined)}
       linkCanvasObject={(link, ctx, globalScale) => {
@@ -1331,11 +1385,19 @@ export default function GraphCanvas({
         const tgt = typeof link.target === "object" ? link.target as GraphNode : nodeById.get(String(link.target));
         if (!src || !tgt || !isShown(src) || !isShown(tgt) || src.x == null || src.y == null || tgt.x == null || tgt.y == null) return;
         const e = linkEnds(link);
-        const amount = pulseAmountForLink(link);
+        const filterDim =
+          !isFiltered(src, search, settings.colorBy, filterOptions) ||
+          !isFiltered(tgt, search, settings.colorBy, filterOptions);
+        const pulse = flowPulseAmount(link);
         const hot = link.id === selectedLinkId || selectedSet.has(e.source) || selectedSet.has(e.target);
-        ctx.fillStyle = amount > 0.05
-          ? pulseStroke(amount, theme)
-          : hot ? palette.linkHot : palette.link;
+        const onFlow = highlightFlow && isFlowLink(link, highlightFlow.hops);
+        ctx.fillStyle = filterDim || isFlowLinkDim(link)
+          ? palette.linkDim
+          : pulse > 0.05
+            ? pulseStroke(pulse, theme)
+            : onFlow || hot
+              ? palette.linkHot
+              : palette.link;
         const size = 9 / globalScale;
         const along = (t: number) => ({
           x: src.x! + (tgt.x! - src.x!) * t,
@@ -1375,7 +1437,7 @@ export default function GraphCanvas({
         const y = node.y ?? 0;
         const border = nodeColor(node, settings.colorBy);
         const matched = isFiltered(node, search, settings.colorBy, filterOptions);
-        const dim = !matched;
+        const dim = !matched || isFlowDim(node);
         const selected = selectedSet.has(node.id);
         const hovered = node.id === hoveredId;
         const connecting = node.id === connectFrom;
@@ -1411,31 +1473,6 @@ export default function GraphCanvas({
           unassigned: !email,
           unrotate,
         });
-        if (pulseHops) {
-          const hop = pulseHops.hops.get(node.id);
-          if (hop != null) {
-            const glow = hopGlow(
-              hop,
-              pulseFront(pulseAt.current, settings.pulseSpeed ?? 0.7, pulseHops.maxHop),
-              pulseHops.maxHop,
-            );
-            if (glow > 0.08) {
-              const haloR = r + (3.2 + glow * 5.2) / globalScale;
-              ctx.beginPath();
-              ctx.arc(x, y, haloR, 0, Math.PI * 2);
-              ctx.fillStyle = pulseHalo(glow, theme);
-              ctx.globalAlpha = alpha;
-              ctx.fill();
-              ctx.beginPath();
-              ctx.arc(x, y, r + (2.2 + glow * 2.8) / globalScale, 0, Math.PI * 2);
-              ctx.strokeStyle = pulseStroke(glow, theme);
-              ctx.lineWidth = (theme === "dark" ? 1.8 : 1.2 + glow * 1.6) / globalScale;
-              ctx.globalAlpha = alpha * (theme === "dark" ? 0.55 + glow * 0.45 : 0.35 + glow * 0.55);
-              ctx.stroke();
-              ctx.globalAlpha = alpha;
-            }
-          }
-        }
         if (selected || connecting) {
           ctx.beginPath();
           ctx.arc(x, y, r + 2.2 / globalScale, 0, Math.PI * 2);
@@ -1532,6 +1569,7 @@ export default function GraphCanvas({
         ctx.restore();
       }}
       onRenderFramePost={(ctx, globalScale) => {
+        paintHighlightFlowLinks(ctx, globalScale);
         paintNamedGroups(ctx, globalScale);
         const box = interaction.current;
         if (box?.type === "marquee" && box.points.length >= 1) {

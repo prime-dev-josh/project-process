@@ -3,6 +3,9 @@ import type { GraphLink, GraphNode } from "../types";
 
 export const CORE_ORIGIN_ID = "prime-pm-root";
 
+/** Fixed speed for highlight-flow link pulse (not user-configurable). */
+export const FLOW_HIGHLIGHT_PULSE_SPEED = 0.7;
+
 export function findOriginId(nodes: GraphNode[]): string | null {
   if (!nodes.length) return null;
   return nodes.find((n) => n.id === CORE_ORIGIN_ID)?.id ?? nodes.find((n) => n.level === 0)?.id ?? nodes[0].id;

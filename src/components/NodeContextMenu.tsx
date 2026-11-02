@@ -6,8 +6,10 @@ type Props = {
   x: number;
   y: number;
   accent?: string;
+  flowHighlighted?: boolean;
   onAddNode: (size: number) => void;
   onLink: (arrows: ArrowStyle) => void;
+  onHighlightFlow: () => void;
   onDelete: () => void;
   onDeleteBranch: () => void;
 };
@@ -16,14 +18,19 @@ export default function NodeContextMenu({
   x,
   y,
   accent,
+  flowHighlighted = false,
   onAddNode,
   onLink,
+  onHighlightFlow,
   onDelete,
   onDeleteBranch,
 }: Props) {
   return (
     <div className={cx("ctx", ctxBox, "w-[196px] min-w-0 rounded-lg p-1")} style={{ left: x, top: y }}>
       <AddGraphActions accent={accent} onAddNode={onAddNode} onLink={onLink} />
+      <button type="button" className={menuItem} onClick={onHighlightFlow}>
+        {flowHighlighted ? "Clear highlight" : "Highlight flow"}
+      </button>
       <div className="sep mx-1 my-1 h-px bg-[var(--line)]" />
       <div className="grid grid-cols-2 gap-0.5">
         <button
