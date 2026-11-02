@@ -5,7 +5,6 @@ export const VIEW_SETTING_KEYS = [
   "charge",
   "linkDistance",
   "collide",
-  "radial",
   "colorBy",
   "cardInfo",
   "showText",
@@ -14,47 +13,62 @@ export const VIEW_SETTING_KEYS = [
   "cardScale",
 ] as const;
 
-export const PHYSICS_PRESETS = {
-  tight: { charge: -90, linkDistance: 52, collide: 8 },
-  balanced: { charge: -160, linkDistance: 72, collide: 12 },
-  loose: { charge: -240, linkDistance: 110, collide: 18 },
+/** Three discrete intensities per force — click once, no slider ticks. */
+export const FORCE_INTENSITY = {
+  charge: [-50, -100, -200],
+  linkDistance: [0, 50, 100],
+  collide: [0, 5, 10],
 } as const;
 
-export type PhysicsPresetId = keyof typeof PHYSICS_PRESETS;
+export const FORCE_INTENSITY_IDS = ["1", "2", "3"] as const;
+export type ForceIntensityId = (typeof FORCE_INTENSITY_IDS)[number];
 
-export function matchingPhysicsPreset(settings: Pick<GraphSettings, "charge" | "linkDistance" | "collide">): PhysicsPresetId | null {
-  for (const id of Object.keys(PHYSICS_PRESETS) as PhysicsPresetId[]) {
-    const preset = PHYSICS_PRESETS[id];
-    if (
-      settings.charge === preset.charge &&
-      settings.linkDistance === preset.linkDistance &&
-      settings.collide === preset.collide
-    ) {
-      return id;
+export function nearestForceLevel(values: readonly number[], value: number): number {
+  let best = 0;
+  let bestDist = Infinity;
+  values.forEach((step, index) => {
+    const dist = Math.abs(step - value);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = index;
     }
-  }
-  return null;
+  });
+  return best;
+}
+
+export function snapForceValue(values: readonly number[], value: number) {
+  return values[nearestForceLevel(values, value)] ?? values[1];
 }
 
 export type ViewSettingKey = (typeof VIEW_SETTING_KEYS)[number];
+
+function withForcedPhysics(settings: GraphSettings): GraphSettings {
+  return graphSettingsSchema.parse({
+    ...settings,
+    radial: true,
+    charge: snapForceValue(FORCE_INTENSITY.charge, settings.charge),
+    linkDistance: snapForceValue(FORCE_INTENSITY.linkDistance, settings.linkDistance),
+    collide: snapForceValue(FORCE_INTENSITY.collide, settings.collide),
+  });
+}
 
 export function pickViewSettings(settings: GraphSettings): GraphSettings {
   const picked = {} as GraphSettings;
   for (const key of VIEW_SETTING_KEYS) {
     (picked as Record<ViewSettingKey, GraphSettings[ViewSettingKey]>)[key] = settings[key];
   }
-  return graphSettingsSchema.parse({ ...DEFAULT_SETTINGS, ...picked });
+  return withForcedPhysics(graphSettingsSchema.parse({ ...DEFAULT_SETTINGS, ...picked }));
 }
 
 export function mergeViewSettings(base: GraphSettings, view?: Partial<GraphSettings> | null): GraphSettings {
-  if (!view) return graphSettingsSchema.parse(base);
+  if (!view) return withForcedPhysics(graphSettingsSchema.parse(base));
   const next = { ...base };
   for (const key of VIEW_SETTING_KEYS) {
     if (view[key] !== undefined) {
       (next as Record<ViewSettingKey, GraphSettings[ViewSettingKey]>)[key] = view[key] as GraphSettings[ViewSettingKey];
     }
   }
-  return graphSettingsSchema.parse(next);
+  return withForcedPhysics(graphSettingsSchema.parse(next));
 }
 
 export function sharedSettingsOnly(settings?: Partial<GraphSettings> | null): Record<string, unknown> {

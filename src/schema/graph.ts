@@ -64,7 +64,7 @@ export const graphSettingsSchema = z
     charge: z.coerce.number().default(-160),
     linkDistance: z.coerce.number().default(72),
     collide: z.coerce.number().default(12),
-    radial: z.boolean().default(false),
+    radial: z.boolean().default(true),
     colorBy: colorBySchema.catch("level"),
     cardInfo: z.boolean().optional(),
     showText: z.boolean().optional(),
@@ -77,10 +77,10 @@ export const graphSettingsSchema = z
   })
   .transform((raw) => ({
     physics: raw.physics,
-    charge: Math.min(-60, Math.max(-300, raw.charge)),
-    linkDistance: Math.min(200, Math.max(20, raw.linkDistance)),
-    collide: Math.min(30, Math.max(0, raw.collide)),
-    radial: raw.radial,
+    charge: Math.min(-50, Math.max(-200, raw.charge)),
+    linkDistance: Math.min(100, Math.max(0, raw.linkDistance)),
+    collide: Math.min(10, Math.max(0, raw.collide)),
+    radial: true,
     colorBy: raw.colorBy,
     cardInfo: typeof raw.cardInfo === "boolean" ? raw.cardInfo : raw.nodeView === "cards",
     showText: raw.showText !== false,

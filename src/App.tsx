@@ -103,6 +103,10 @@ export default function App() {
   const importRef = useRef<HTMLInputElement>(null);
   const persistTimer = useRef<number | null>(null);
   const persistedPositions = useRef(new Map<string, { x: number; y: number }>());
+  const persistLayoutAfterReorg = useRef(false);
+  const saveViewTimer = useRef(0);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
   const fittedOnce = useRef(false);
   const editSaveRef = useRef<(() => void) | null>(null);
   const [editLocked, setEditLocked] = useState(false);
@@ -161,7 +165,14 @@ export default function App() {
   }, [viewRotation]);
 
   useEffect(() => {
-    saveViewSettings(settings);
+    if (saveViewTimer.current) window.clearTimeout(saveViewTimer.current);
+    saveViewTimer.current = window.setTimeout(() => {
+      saveViewTimer.current = 0;
+      saveViewSettings(settings);
+    }, 300);
+    return () => {
+      if (saveViewTimer.current) window.clearTimeout(saveViewTimer.current);
+    };
   }, [settings]);
 
   useEffect(() => {
@@ -185,12 +196,12 @@ export default function App() {
   useEffect(() => {
     if (persistTimer.current) window.clearTimeout(persistTimer.current);
     persistTimer.current = window.setTimeout(() => {
-      saveDocument({ nodes, links, groups, settings });
+      saveDocument({ nodes, links, groups, settings: settingsRef.current });
     }, 450);
     return () => {
       if (persistTimer.current) window.clearTimeout(persistTimer.current);
     };
-  }, [nodes, links, groups, settings]);
+  }, [nodes, links, groups]);
 
   useEffect(() => {
     if (!editing && !editingLink) setEditLocked(false);
@@ -374,7 +385,25 @@ export default function App() {
   }
 
   function patchSettings(patch: Partial<GraphSettings>) {
-    setSettings(mergeViewSettings(settings, patch));
+    const forceOnly =
+      (patch.charge !== undefined || patch.linkDistance !== undefined || patch.collide !== undefined) &&
+      patch.physics === undefined &&
+      patch.enlarge === undefined &&
+      patch.textScale === undefined &&
+      patch.cardScale === undefined &&
+      patch.colorBy === undefined &&
+      patch.cardInfo === undefined &&
+      patch.showText === undefined;
+    setSettings((current) => {
+      const next = mergeViewSettings(current, patch);
+      settingsRef.current = next;
+      return next;
+    });
+    if (forceOnly) {
+      graphRef.current?.applyViewForces?.({ reheat: false });
+    } else if (patch.physics !== undefined) {
+      graphRef.current?.applyViewForces?.({ rebuildStructure: true, reheat: false });
+    }
   }
 
   function updateNode(id: string, patch: Partial<GraphNode>) {
@@ -746,8 +775,13 @@ export default function App() {
   }, [nodes.length, size.w, size.h, fitGraph, hydration]);
 
   function reheat() {
-    setSettings(mergeViewSettings(settings, { physics: true }));
-    window.setTimeout(() => graphRef.current?.d3ReheatSimulation(), 20);
+    persistLayoutAfterReorg.current = true;
+    setSettings((current) => {
+      const next = mergeViewSettings(current, { physics: true });
+      settingsRef.current = next;
+      return next;
+    });
+    window.setTimeout(() => graphRef.current?.applyViewForces?.({ rebuildStructure: true, reheat: true }), 20);
   }
 
   function screenOf(x: number, y: number) {
@@ -880,13 +914,22 @@ export default function App() {
               onGroupFilters={setGroupFilters}
               onClearFilters={clearFilters}
               onSettings={patchSettings}
-              onResetSettings={() => setSettings(DEFAULT_SETTINGS)}
+              onResetSettings={() => {
+                const next = mergeViewSettings(DEFAULT_SETTINGS);
+                settingsRef.current = next;
+                setSettings(next);
+                graphRef.current?.applyViewForces?.({ rebuildStructure: true, reheat: false });
+              }}
               onFit={fitGraph}
               onReorg={reheat}
               onTogglePhysics={() => {
                 const next = !settings.physics;
-                setSettings(mergeViewSettings(settings, { physics: next }));
-                if (next) window.setTimeout(() => graphRef.current?.d3ReheatSimulation(), 40);
+                patchSettings({ physics: next });
+                if (next) persistLayoutAfterReorg.current = true;
+                window.setTimeout(
+                  () => graphRef.current?.applyViewForces?.({ rebuildStructure: true, reheat: next }),
+                  40,
+                );
               }}
               onToggleCards={() => setSettings(mergeViewSettings(settings, { cardInfo: !settings.cardInfo }))}
               onNodeSave={(patch) => {
@@ -924,6 +967,7 @@ export default function App() {
             links={links}
             groups={groups}
             settings={settings}
+            settingsRef={settingsRef}
             selectedIds={selectedIds}
             selectedLinkId={picked?.kind === "link" ? picked.id : null}
             hoveredId={hoveredId}
@@ -1030,13 +1074,12 @@ export default function App() {
                 if (prev && Math.abs(prev.x - n.x) < POSITION_EPSILON && Math.abs(prev.y - n.y) < POSITION_EPSILON) return [];
                 return [{ id: n.id, x: n.x, y: n.y }];
               });
-              saveDocument({
-                nodes: graphStore.state.nodes,
-                links: graphStore.state.links,
-                groups: graphStore.state.groups,
-                settings,
-              });
-              if (moved.length && graphStore.state.hydrated) savePositions(moved, "Updated positions");
+              if (persistLayoutAfterReorg.current && moved.length && graphStore.state.hydrated) {
+                persistLayoutAfterReorg.current = false;
+                savePositions(moved, "Updated positions");
+              } else {
+                persistLayoutAfterReorg.current = false;
+              }
               if (!fittedOnce.current) {
                 fittedOnce.current = true;
                 fitGraph();

@@ -1,5 +1,5 @@
 import { forceCollide, forceRadial } from "d3-force";
-import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import ForceGraph2D, { type ForceGraphMethods } from "react-force-graph-2d";
 import { users } from "../data/users";
 import { personStyle } from "../data/personStyle";
@@ -9,6 +9,7 @@ import {
   GROUP_LINK_CAPSULE,
   GROUP_MEMBRANE_PAD,
   cellHulls,
+  cheapCellHulls,
   groupFieldBlend,
   groupMemberRadius,
   forceGroupExclusion,
@@ -35,7 +36,9 @@ import { STATUS_COLORS, type WorkflowStatus } from "../graph/workflowStatus";
 import { loadPersonPhoto } from "../lib/personPhoto";
 import type { ArrowStyle, GraphGroup, GraphLink, GraphNode, GraphSettings } from "../types";
 
-export type GraphHandle = ForceGraphMethods<GraphNode, GraphLink>;
+export type GraphHandle = ForceGraphMethods<GraphNode, GraphLink> & {
+  applyViewForces?: (opts?: { reheat?: boolean; rebuildStructure?: boolean }) => void;
+};
 
 /** Shift adds to the selection, Ctrl/⌘ subtracts from it, otherwise the lasso replaces it. */
 export type LassoMode = "replace" | "add" | "subtract";
@@ -45,6 +48,7 @@ type Props = {
   links: GraphLink[];
   groups: GraphGroup[];
   settings: GraphSettings;
+  settingsRef: MutableRefObject<GraphSettings>;
   selectedIds: string[];
   selectedLinkId: string | null;
   hoveredId: string | null;
@@ -138,6 +142,7 @@ function groupLinkCapsules(
   members: Array<{ id: string; x?: number; y?: number }>,
   links: GraphLink[],
   disks: Disk[],
+  opts?: { bridgeAllMemberLinks?: boolean },
 ): Capsule[] {
   const byId = new Map(members.map((n) => [n.id, n]));
   const diskById = new Map(members.map((n, i) => [n.id, disks[i]]));
@@ -150,11 +155,15 @@ function groupLinkCapsules(
     const ra = diskById.get(a.id)?.r ?? GROUP_MEMBRANE_PAD;
     const rb = diskById.get(b.id)?.r ?? GROUP_MEMBRANE_PAD;
     const len = Math.hypot(b.x - a.x, b.y - a.y);
-    if (len > (ra + rb) * 2.1) continue;
+    if (len < 1e-6) continue;
+    const shortLink = len <= (ra + rb) * 2.1;
+    if (!opts?.bridgeAllMemberLinks && !shortLink) continue;
+    const baseR = Math.min(ra, rb) * GROUP_LINK_CAPSULE;
+    const r = shortLink ? baseR : baseR * Math.max(0.45, Math.min(1, ((ra + rb) * 2.2) / len));
     capsules.push({
       a: { x: a.x, y: a.y },
       b: { x: b.x, y: b.y },
-      r: Math.min(ra, rb) * GROUP_LINK_CAPSULE,
+      r,
     });
   }
   return capsules;
@@ -366,11 +375,12 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number,
   return lines;
 }
 
-export default function GraphCanvas({
+function GraphCanvas({
   nodes,
   links,
   groups = [],
   settings,
+  settingsRef,
   selectedIds,
   selectedLinkId,
   hoveredId,
@@ -409,6 +419,40 @@ export default function GraphCanvas({
   onSettle,
   graphRef,
 }: Props) {
+  const handlersRef = useRef({
+    onSelect,
+    onMarquee,
+    onGroupMoveEnd,
+    onSelectLink,
+    onHover,
+    onEditLink,
+    onNodeMenu,
+    onLinkMenu,
+    onBackgroundMenu,
+    onBackground,
+    onDragEnd,
+    onConnectTarget,
+    onPlace,
+    onZoom,
+    onSettle,
+  });
+  handlersRef.current = {
+    onSelect,
+    onMarquee,
+    onGroupMoveEnd,
+    onSelectLink,
+    onHover,
+    onEditLink,
+    onNodeMenu,
+    onLinkMenu,
+    onBackgroundMenu,
+    onBackground,
+    onDragEnd,
+    onConnectTarget,
+    onPlace,
+    onZoom,
+    onSettle,
+  };
   const lastClick = useRef<{ key: string; t: number } | null>(null);
   const cursorGraph = useRef<{ x: number; y: number } | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -528,40 +572,70 @@ export default function GraphCanvas({
     return () => window.removeEventListener("pointerup", onUp, true);
   }, [placeArmed, onPlace, graphRef]);
 
-  useEffect(() => {
+  const lastPhysicsStructureKey = useRef<string | null>(null);
+  const nodesRef = useRef(nodes);
+  const linksRef = useRef(links);
+  const groupsRef = useRef(groups);
+  const collideRef = useRef(settings.collide);
+  const enlargeRef = useRef(settings.enlarge);
+  const simulatingRef = useRef(false);
+  const hullCacheRef = useRef(new Map<string, { sig: string; hulls: ReturnType<typeof cellHulls>; cheap: boolean }>());
+  const hullFrameRef = useRef(0);
+  const liveFrameRef = useRef<{ nodes: GraphNode[]; byId: Map<string, GraphNode> } | null>(null);
+  nodesRef.current = nodes;
+  linksRef.current = links;
+  groupsRef.current = groups;
+  collideRef.current = settingsRef.current.collide;
+  enlargeRef.current = settingsRef.current.enlarge;
+
+  function applyViewForces(opts?: { reheat?: boolean; rebuildStructure?: boolean }) {
     const fg = graphRef.current;
     if (!fg) return;
+    const s = settingsRef.current;
+    collideRef.current = s.collide;
+    enlargeRef.current = s.enlarge;
     const charge = fg.d3Force("charge") as { strength?: (n: number) => void } | undefined;
-    charge?.strength?.(settings.physics ? settings.charge : 0);
+    charge?.strength?.(s.physics ? s.charge : 0);
     const linkForce = fg.d3Force("link") as
       | { distance?: (n: number) => unknown; strength?: (n: number) => unknown }
       | undefined;
-    linkForce?.distance?.(settings.linkDistance);
+    linkForce?.distance?.(s.linkDistance);
     linkForce?.strength?.(0.28);
-    const { x: cx, y: cy } = layoutCentroid(nodes);
-    if (settings.radial) {
+    const structureKey = String(s.physics);
+    const structureChanged = opts?.rebuildStructure || lastPhysicsStructureKey.current !== structureKey;
+    if (structureChanged) {
+      lastPhysicsStructureKey.current = structureKey;
+      const { x: cx, y: cy } = layoutCentroid(nodesRef.current);
+      if (s.physics) {
+        fg.d3Force(
+          "radial",
+          forceRadial((d: GraphNode) => 48 + d.level * 108, cx, cy).strength(0.032) as never,
+        );
+      } else {
+        fg.d3Force("radial", null);
+      }
       fg.d3Force(
-        "radial",
-        forceRadial((d: GraphNode) => 48 + d.level * 108, cx, cy).strength(0.032) as never,
+        "collide",
+        forceCollide((d: GraphNode) => collideRef.current + d.size * 8 + Math.max(0, 4 - d.level)).strength(0.92).iterations(3) as never,
       );
-    } else {
-      fg.d3Force("radial", null);
+      fg.d3Force(
+        "groupField",
+        s.physics
+          ? (forceGroupExclusion(
+              (live) => groupFieldBodies(live, linksRef.current, groupsRef.current, viewScale(enlargeRef.current)),
+              (node) => collideRef.current + (node.size ?? 1) * 8,
+            ) as never)
+          : null,
+      );
     }
-    fg.d3Force(
-      "collide",
-      forceCollide((d: GraphNode) => settings.collide + d.size * 8 + Math.max(0, 4 - d.level)).strength(0.92).iterations(3) as never,
-    );
-    fg.d3Force(
-      "groupField",
-      settings.physics
-        ? (forceGroupExclusion(
-            (live) => groupFieldBodies(live, links, groups, viewScale(settings.enlarge)),
-            (node) => settings.collide + (node.size ?? 1) * 8,
-          ) as never)
-        : null,
-    );
-    if (settings.physics) fg.d3ReheatSimulation();
-  }, [graphRef, settings, nodes, links, groups]);
+    if (opts?.reheat && s.physics) fg.d3ReheatSimulation();
+  }
+
+  useEffect(() => {
+    const handle = graphRef.current;
+    if (handle) handle.applyViewForces = applyViewForces;
+    applyViewForces({ rebuildStructure: lastPhysicsStructureKey.current == null });
+  });
 
   function canvasAtClient(clientX: number, clientY: number) {
     const rect = hostRef.current?.getBoundingClientRect();
@@ -594,14 +668,23 @@ export default function GraphCanvas({
   }
 
   function liveEngineNodes(): GraphNode[] {
+    if (liveFrameRef.current) return liveFrameRef.current.nodes;
     const fg = graphRef.current as (GraphHandle & { graphData?: unknown }) | undefined;
     const raw = fg?.graphData;
+    let list = graphData.nodes;
     try {
       const data = typeof raw === "function" ? (raw as () => { nodes?: GraphNode[] })() : raw as { nodes?: GraphNode[] } | undefined;
-      return data?.nodes ?? graphData.nodes;
+      list = data?.nodes ?? graphData.nodes;
     } catch {
-      return graphData.nodes;
+      list = graphData.nodes;
     }
+    liveFrameRef.current = { nodes: list, byId: new Map(list.map((n) => [n.id, n])) };
+    return list;
+  }
+
+  function liveNodeById(id: string) {
+    liveEngineNodes();
+    return liveFrameRef.current?.byId.get(id);
   }
 
   function paintUprightLabels(globalScale: number) {
@@ -825,8 +908,8 @@ export default function GraphCanvas({
     for (const link of links) {
       if (isFlowLinkDim(link)) continue;
       const e = linkEnds(link);
-      const src = liveEngineNodes().find((n) => n.id === e.source) ?? nodeById.get(e.source);
-      const tgt = liveEngineNodes().find((n) => n.id === e.target) ?? nodeById.get(e.target);
+      const src = liveNodeById(e.source) ?? nodeById.get(e.source);
+      const tgt = liveNodeById(e.target) ?? nodeById.get(e.target);
       if (!src || !tgt || src.x == null || src.y == null || tgt.x == null || tgt.y == null) continue;
       if (!isShown(src) || !isShown(tgt)) continue;
       const amount = flowPulseAmount(link);
@@ -868,13 +951,27 @@ export default function GraphCanvas({
         group,
         members,
         disks,
-        capsules: groupLinkCapsules(members, links, disks),
+        capsules: groupLinkCapsules(members, links, disks, { bridgeAllMemberLinks: true }),
         blend: groupFieldBlend(disks),
       }];
     });
+    const cheap = simulatingRef.current;
+    hullFrameRef.current += 1;
+    const refreshCheap = cheap && hullFrameRef.current % 3 === 0;
     for (const spec of painted) {
-      const others = painted.filter((item) => item !== spec);
-      const hulls = cellHulls(spec.disks, spec.capsules, spec.blend, others).filter((hull) => hull.length >= 3);
+      const sig = spec.disks.map((d) => `${d.x | 0},${d.y | 0}`).join(";") + `|${spec.capsules.length}`;
+      const cached = hullCacheRef.current.get(spec.group.id);
+      let hulls: ReturnType<typeof cellHulls>;
+      if (cached && cached.sig === sig && cached.cheap === cheap && (!cheap || !refreshCheap)) {
+        hulls = cached.hulls;
+      } else if (cheap) {
+        hulls = cheapCellHulls(spec.disks, spec.capsules, spec.blend).filter((hull) => hull.length >= 3);
+        hullCacheRef.current.set(spec.group.id, { sig, hulls, cheap: true });
+      } else {
+        const others = painted.filter((item) => item !== spec);
+        hulls = cellHulls(spec.disks, spec.capsules, spec.blend, others).filter((hull) => hull.length >= 3);
+        hullCacheRef.current.set(spec.group.id, { sig, hulls, cheap: false });
+      }
       if (!hulls.length) continue;
       const { group, members, disks } = spec;
       const color = groupStatusColor(members, settings.colorBy);
@@ -1257,11 +1354,19 @@ export default function GraphCanvas({
       enablePanInteraction={false}
       enableZoomInteraction={false}
       enablePointerInteraction={connectArmed || placeArmed}
-      autoPauseRedraw={false}
+      autoPauseRedraw={!highlightFlow}
       warmupTicks={settings.physics ? 20 : 0}
       nodeCanvasObjectMode={() => "replace"}
       onZoom={(t) => onZoom(t.k)}
-      onEngineStop={onSettle}
+      onEngineTick={() => {
+        simulatingRef.current = true;
+      }}
+      onEngineStop={() => {
+        simulatingRef.current = false;
+        hullCacheRef.current.clear();
+        graphRef.current?.resumeAnimation?.();
+        handlersRef.current.onSettle();
+      }}
       onNodeHover={(n) => onHover(n?.id ?? null)}
       onNodeDrag={(n, translate) => {
         if (!selectedSet.has(n.id) || selectedSet.size < 2) return;
@@ -1569,6 +1674,7 @@ export default function GraphCanvas({
         ctx.restore();
       }}
       onRenderFramePost={(ctx, globalScale) => {
+        try {
         paintHighlightFlowLinks(ctx, globalScale);
         paintNamedGroups(ctx, globalScale);
         const box = interaction.current;
@@ -1737,6 +1843,9 @@ export default function GraphCanvas({
         }
         ctx.restore();
         paintUprightLabels(globalScale);
+        } finally {
+          liveFrameRef.current = null;
+        }
       }}
     />
     </div>
@@ -1744,3 +1853,47 @@ export default function GraphCanvas({
     </div>
   );
 }
+
+function lookSettingsEqual(a: GraphSettings, b: GraphSettings) {
+  return (
+    a.physics === b.physics &&
+    a.enlarge === b.enlarge &&
+    a.textScale === b.textScale &&
+    a.cardScale === b.cardScale &&
+    a.colorBy === b.colorBy &&
+    a.cardInfo === b.cardInfo &&
+    a.showText === b.showText
+  );
+}
+
+function canvasPropsEqual(prev: Props, next: Props) {
+  return (
+    prev.nodes === next.nodes &&
+    prev.links === next.links &&
+    prev.groups === next.groups &&
+    prev.selectedIds === next.selectedIds &&
+    prev.selectedLinkId === next.selectedLinkId &&
+    prev.hoveredId === next.hoveredId &&
+    prev.connectFrom === next.connectFrom &&
+    prev.connectArmed === next.connectArmed &&
+    prev.placeArmed === next.placeArmed &&
+    prev.placeFrom === next.placeFrom &&
+    prev.placeSize === next.placeSize &&
+    prev.linkArrows === next.linkArrows &&
+    prev.search === next.search &&
+    prev.statusFilters === next.statusFilters &&
+    prev.employeeFilter === next.employeeFilter &&
+    prev.groupFilters === next.groupFilters &&
+    prev.hideFiltered === next.hideFiltered &&
+    prev.highlightIds === next.highlightIds &&
+    prev.highlightFlow === next.highlightFlow &&
+    prev.theme === next.theme &&
+    prev.rotation === next.rotation &&
+    prev.uprightText === next.uprightText &&
+    prev.width === next.width &&
+    prev.height === next.height &&
+    lookSettingsEqual(prev.settings, next.settings)
+  );
+}
+
+export default memo(GraphCanvas, canvasPropsEqual);

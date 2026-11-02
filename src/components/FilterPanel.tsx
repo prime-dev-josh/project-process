@@ -7,8 +7,8 @@ import {
   type WorkflowStatus,
 } from "../graph/workflowStatus";
 import { users } from "../data/users";
-import { matchingPhysicsPreset, PHYSICS_PRESETS, type PhysicsPresetId } from "../graph/viewSettings";
-import { cx, field, sideH2 } from "../styles";
+import { FORCE_INTENSITY, FORCE_INTENSITY_IDS, nearestForceLevel } from "../graph/viewSettings";
+import { cx, field, sideH2, toolBtnOn } from "../styles";
 import type { ColorBy, GraphGroup, GraphNode, GraphSettings } from "../types";
 import { isFiltered } from "../graph/visibility";
 import GroupFilterPicker from "./GroupFilterPicker";
@@ -232,7 +232,7 @@ export default function FilterPanel({
         <SegmentedControl
           options={[
             { id: "fit", label: "Fit", title: "Fit the graph in the window" },
-            { id: "reorg", label: "Reorg", title: "Spread nodes with physics" },
+            { id: "reorg", label: "Reorg", title: "Apply force settings and let the map settle" },
             { id: "physics", label: "Physics", title: "Let nodes move and settle" },
           ]}
           pressed={settings.physics ? (["physics"] as const) : []}
@@ -302,42 +302,72 @@ export default function FilterPanel({
         {advanced && settings.physics ? (
           <div className="mt-1.5">
             <p className="mb-1 text-[10px] font-semibold tracking-wide text-[var(--muted)] uppercase">Forces</p>
-            <SegmentedControl
-              options={[
-                { id: "tight", label: "Tight", title: "Keep clusters close" },
-                { id: "balanced", label: "Balanced", title: "Everyday spacing" },
-                { id: "loose", label: "Loose", title: "More air between nodes" },
-              ]}
-              value={matchingPhysicsPreset(settings)}
-              onSelect={(id: PhysicsPresetId) => onSettings({ ...PHYSICS_PRESETS[id] })}
-            />
-            <SliderField
+            <ForceIntensityRow
               label="Spread"
-              min={60}
-              max={300}
-              step={10}
-              value={-settings.charge}
-              onChange={(spread) => onSettings({ charge: -spread })}
+              values={FORCE_INTENSITY.charge}
+              value={settings.charge}
+              titles={["Closest clusters", "Balanced", "Most spread"]}
+              onChange={(charge) => onSettings({ charge })}
             />
-            <SliderField
+            <ForceIntensityRow
               label="Link length"
-              min={20}
-              max={200}
-              step={4}
+              values={FORCE_INTENSITY.linkDistance}
               value={settings.linkDistance}
+              titles={["Shortest links", "Balanced", "Longest links"]}
               onChange={(linkDistance) => onSettings({ linkDistance })}
             />
-            <SliderField
+            <ForceIntensityRow
               label="Padding"
-              min={0}
-              max={30}
-              step={1}
+              values={FORCE_INTENSITY.collide}
               value={settings.collide}
+              titles={["Least padding", "Balanced", "Most padding"]}
               onChange={(collide) => onSettings({ collide })}
             />
+            <button
+              type="button"
+              className={cx(toolBtnOn, "mt-2.5 w-full py-2 text-center")}
+              title="Apply the force levels above and let the map settle (same as Reorg under Map)"
+              onClick={onReorg}
+            >
+              Apply layout
+            </button>
           </div>
         ) : null}
       </section>
+    </div>
+  );
+}
+
+function ForceIntensityRow({
+  label,
+  values,
+  value,
+  titles,
+  onChange,
+}: {
+  label: string;
+  values: readonly number[];
+  value: number;
+  titles: readonly string[];
+  onChange: (value: number) => void;
+}) {
+  const level = nearestForceLevel(values, value);
+  return (
+    <div className="my-1">
+      <p className="mb-1 text-[11px] text-[var(--muted)]">{label}</p>
+      <SegmentedControl
+        options={FORCE_INTENSITY_IDS.map((id, index) => ({
+          id,
+          label: String(index + 1),
+          title: titles[index] ?? `${label} ${index + 1}`,
+        }))}
+        value={FORCE_INTENSITY_IDS[level]}
+        onSelect={(id) => {
+          const index = FORCE_INTENSITY_IDS.indexOf(id);
+          const next = values[index];
+          if (next != null) onChange(next);
+        }}
+      />
     </div>
   );
 }

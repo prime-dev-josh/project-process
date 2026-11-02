@@ -242,7 +242,7 @@ export default function HelpTab() {
           <Card
             icon={<IcoView />}
             title="View"
-            body="Fit, Reorg, Physics, Text, and Cards live under View. Node, Text, and Card sliders scale those pieces. With Physics on, Advanced offers Tight / Balanced / Loose presets plus Spread, Link length, and Padding. View rotation (compass) and these prefs stay on this device — Reset view prefs restores defaults."
+            body="Fit, Reorg, Physics, Text, and Cards live under View. Node, Text, and Card sliders scale those pieces. Gravity stays on whenever Physics is on. Advanced offers three-step Spread, Link length, and Padding — pick a level, then press Reorg (or Apply with Reorg) to restyle the map. Changing those levels alone does not move nodes. View rotation (compass) and these prefs stay on this device — Reset view prefs restores defaults."
           />
         </div>
       </section>

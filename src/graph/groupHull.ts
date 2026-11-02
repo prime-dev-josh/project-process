@@ -407,6 +407,26 @@ export function cellHulls(
   return fieldContours(self, others);
 }
 
+/** Convex stand-in used while the simulation is moving — much cheaper than marching squares. */
+export function cheapCellHulls(disks: Disk[], capsules: Capsule[] = [], blend?: number): Point[][] {
+  if (!disks.length) return [];
+  if (disks.length === 1 && !capsules.length) return cellHulls(disks, capsules, blend);
+  const pad = blend ?? groupFieldBlend(disks);
+  const pts: Point[] = [];
+  for (const disk of disks) {
+    pts.push({ x: disk.x, y: disk.y });
+    pts.push({ x: disk.x + disk.r, y: disk.y });
+    pts.push({ x: disk.x - disk.r, y: disk.y });
+    pts.push({ x: disk.x, y: disk.y + disk.r });
+    pts.push({ x: disk.x, y: disk.y - disk.r });
+  }
+  for (const cap of capsules) {
+    pts.push(cap.a, cap.b);
+  }
+  const hull = offsetConvexHull(convexHull(pts), Math.max(pad * 0.35, 8));
+  return hull.length >= 3 ? [hull] : [];
+}
+
 /** Largest membrane — kept for callers that only need one ring. */
 export function cellHull(disks: Disk[], capsules: Capsule[] = [], blend?: number, others: GroupFieldSpec[] = []): Point[] {
   return cellHulls(disks, capsules, blend, others)[0] ?? [];
