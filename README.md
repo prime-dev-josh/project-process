@@ -100,8 +100,18 @@ Contracts are validated with Zod in `src/schema/graph.ts` and `src/routes/api/ma
 ## Database
 
 - Schema: **`projectprocess`** on database **`atg-requirements`**
-- Setup: `scripts/projectprocess_sql.py` + SQL files under `scripts/`
 - Server access: `src/server/azureSql.ts`, persistence: `src/server/mapStore.ts`
+- Tables: **Map**, **Node** (includes `group_id`), **Link**, **ChangeLog**, **[Group]**. View settings and highlight flow are not stored in SQL.
+
+### Which script to run
+
+| Situation | What to run |
+|-----------|-------------|
+| New database or you want one idempotent upgrade | `npm run sql:setup` (`scripts/projectprocess_sql.py`) — creates schema/tables, adds sync columns, **Group** table, indexes |
+| DBA/manual T-SQL or grant App Service identity | `scripts/projectprocess_migration.sql` (steps 1–4; step 3 is the managed identity user/roles) |
+| All slots run a build that no longer uses legacy columns | `scripts/projectprocess_migration_post_deploy.sql` or `python scripts/projectprocess_sql.py --drop-legacy` — drops `Map.settings_json`, `Node.fx`, `Node.fy` |
+
+If **`projectprocess.[Group]`** and **`Node.group_id`** already exist, you do not need a new migration for membrane rendering, highlight flow, or filter UX.
 
 ## Production build
 

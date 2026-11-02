@@ -3,6 +3,12 @@
   Run each step in order, as a database admin, against database [atg-requirements].
   Everything here is safe while the current build is still deployed.
   After the new build is deployed, run projectprocess_migration_post_deploy.sql.
+
+  App schema touchpoints (mapStore.ts): Map, Node, Link, ChangeLog, [Group].
+  Recent UI (highlight flow, view settings, group membranes) does not add SQL columns.
+
+  Prefer idempotent setup from a dev machine: npm run sql:setup  (projectprocess_sql.py).
+  Use this file when a DBA runs T-SQL manually or must grant the App Service identity (step 3).
 */
 
 /* ---------------------------------------------------------------------------

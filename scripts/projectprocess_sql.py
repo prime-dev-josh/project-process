@@ -228,7 +228,7 @@ def main() -> None:
         ensure_schema(cn, drop_legacy)
         if drop_legacy:
             print("Dropped legacy columns Map.settings_json / Node.fx / Node.fy")
-        print(f"Ready {SCHEMA}.Map / Node / Link / ChangeLog")
+        print(f"Ready {SCHEMA}.Map / Node / Link / ChangeLog / [Group]")
         nodes = cn.execute(f"SELECT COUNT(*) FROM {SCHEMA}.Node WHERE is_deleted = 0").fetchone()[0]
         links = cn.execute(f"SELECT COUNT(*) FROM {SCHEMA}.Link WHERE is_deleted = 0").fetchone()[0]
         print(f"{SCHEMA}.Node={nodes} {SCHEMA}.Link={links} (empty tables seed on first app load)")
