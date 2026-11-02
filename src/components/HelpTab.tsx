@@ -110,9 +110,20 @@ function IcoPeople() {
 function IcoStatus() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
-      <circle cx="3.4" cy="8" r="2" fill="#e24b4b" />
-      <circle cx="8" cy="8" r="2" fill="#e29b2d" />
-      <circle cx="12.6" cy="8" r="2" fill="#3f9a5c" />
+      <circle cx="3.4" cy="8" r="2" fill="#f87171" />
+      <circle cx="8" cy="8" r="2" fill="#f5b400" />
+      <circle cx="12.6" cy="8" r="2" fill="#4ade80" />
+    </svg>
+  );
+}
+
+function IcoFlow() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
+      <circle cx="3.5" cy="8" r="2" fill="currentColor" />
+      <circle cx="12.5" cy="8" r="2" fill="currentColor" opacity="0.35" />
+      <path d="M5.8 8 H10.2" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M9.2 6.6 L10.8 8 L9.2 9.4" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -210,16 +221,29 @@ export default function HelpTab() {
           <Card icon={<IcoAdd />} title="Child nodes" body="Adding from a node's menu links the new node with a one-way arrow from the original and copies that node's group and assignee." />
           <Card icon={<IcoLink />} title="Edit a link" body="Right-click a connection to flip, change arrows, insert, or delete." />
           <Card icon={<IcoSelect />} title="Name a group" body="Lasso or Shift-click two or more nodes, then use the popup dropdown to assign an existing group, create a new one, or set None. Modify Node uses the same control for a single node. A colored cell membrane wraps the members, with the group name on the rim. It turns green when every member is done, red when none are, and gold otherwise." />
+          <Card
+            icon={<IcoFlow />}
+            title="Highlight flow"
+            body={<>Right-click a node and choose Highlight flow. Off-path nodes and links dim; connections on the downstream path brighten and pulse. Travel follows arrow direction from that node (two-way links can run either way). Press <Key>Esc</Key> or choose Clear highlight. This highlight is for your session only — it is not saved to the shared map.</>}
+          />
         </div>
       </section>
 
       <section>
         <h3 className={cx(sideH2, "mb-1.5")}>Filter and look</h3>
         <div className="grid grid-cols-2 gap-1.5">
-          <Card icon={<IcoFilter />} title="Search & filter" body="Search titles, tap status pills or people in the left rail, or use the Groups dropdown to filter by one or more named groups (including Ungrouped). The map stays in place; filter changes only pan or zoom out so every matching node stays on screen. Use Fit for a tight frame. Clear filters resets search and filters." />
-          <Card icon={<IcoStatus />} title="Status" body="Incomplete, in progress, and done — shown as the ring on each ball." />
+          <Card
+            icon={<IcoFilter />}
+            title="Search & filter"
+            body="Search titles, tap status pills, pick people, or use the Groups dropdown (multi-select, including Ungrouped). When the person row is too narrow, it becomes a searchable dropdown. If nothing matches, the filter panel says so. The map stays in place; filter changes only pan or zoom out so matches stay visible. Clear filters resets everything; Fit reframes matches."
+          />
+          <Card icon={<IcoStatus />} title="Status" body="Incomplete (red), in progress / WIP (gold), and done (green) — shown as the ring on each ball and in the filter pills." />
           <Card icon={<IcoPeople />} title="Assign people" body="Open the assignee dropdown on a node or multi-select panel. The closed row shows the current person; search to pick someone else or Unassigned. Assigned nodes use that person's Entra photo when Graph can reach it." />
-          <Card icon={<IcoView />} title="View" body="Fit, Reorg, Physics, Text, and Cards live under View. Node, Text, and Card sliders scale those pieces; Tight / Balanced / Loose plus Spread, Link length, and Padding are under Advanced. Right-click a node and choose Highlight flow to dim off-path nodes and links, then pulse along outgoing connections from that node (both-ways links can be followed in either direction). These stay on this device — Reset view prefs restores defaults." />
+          <Card
+            icon={<IcoView />}
+            title="View"
+            body="Fit, Reorg, Physics, Text, and Cards live under View. Node, Text, and Card sliders scale those pieces. With Physics on, Advanced offers Tight / Balanced / Loose presets plus Spread, Link length, and Padding. View rotation (compass) and these prefs stay on this device — Reset view prefs restores defaults."
+          />
         </div>
       </section>
 
