@@ -77,11 +77,11 @@ export function documentLink(link: GraphLink): GraphLink {
 }
 
 export function documentGroup(group: GraphGroup): GraphGroup {
-  return { id: group.id, title: group.title };
+  return { id: group.id, title: group.title, color: group.color };
 }
 
 export function sameGroup(a: GraphGroup, b: GraphGroup) {
-  return a.title === b.title;
+  return a.title === b.title && (a.color ?? "") === (b.color ?? "");
 }
 
 export function actionKindFromChanges(changes: ChangeItem[]): ChangeKind {
@@ -321,6 +321,16 @@ export function diffSnapshots(saved: GraphSnapshot, current: GraphSnapshot): Cha
         targetId: group.id,
         title: `Renamed group`,
         detail: fieldChange("Name", prev.title || "Untitled group", group.title || "Untitled group"),
+      });
+    }
+    if ((prev.color ?? "") !== (group.color ?? "")) {
+      changes.push({
+        id: `group-color-${group.id}`,
+        kind: "update",
+        target: "group",
+        targetId: group.id,
+        title: `Changed group color`,
+        detail: fieldChange("Color", prev.color || "default", group.color || "default"),
       });
     }
   }

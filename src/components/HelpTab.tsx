@@ -220,7 +220,7 @@ export default function HelpTab() {
           <Card icon={<IcoEdit />} title="Edit a node" body="Click a ball — the left panel opens. Status, person, group, and size save instantly; Title and Description save with Enter / Ctrl+Enter or the check button." />
           <Card icon={<IcoAdd />} title="Child nodes" body="Adding from a node's menu links the new node with a one-way arrow from the original and copies that node's group and assignee." />
           <Card icon={<IcoLink />} title="Edit a link" body="Right-click a connection to flip, change arrows, insert, or delete." />
-          <Card icon={<IcoSelect />} title="Name a group" body="Lasso or Shift-click two or more nodes, then use the popup dropdown to assign an existing group, create a new one, or set None. Modify Node uses the same control for a single node. A colored cell membrane wraps the members, with the group name on the rim. It turns green when every member is done, red when none are, and gold otherwise." />
+          <Card icon={<IcoSelect />} title="Name a group" body="Lasso or Shift-click two or more nodes, then use the popup dropdown to assign an existing group, create a new one, or set None. Modify Node uses the same control for a single node. Open Manage groups in the left panel — or the fields under Group — to rename a group and set its membrane color with the color picker or a hex code." />
           <Card
             icon={<IcoFlow />}
             title="Highlight flow"
@@ -242,7 +242,7 @@ export default function HelpTab() {
           <Card
             icon={<IcoView />}
             title="View"
-            body="Fit, Reorg, Physics, Text, and Cards live under View. Node, Text, and Card sliders scale those pieces. Gravity stays on whenever Physics is on. Advanced offers three-step Spread, Link length, and Padding — pick a level, then press Reorg (or Apply with Reorg) to restyle the map. Changing those levels alone does not move nodes. View rotation (compass) and these prefs stay on this device — Reset view prefs restores defaults."
+            body="Fit, Reorg, Physics, Text, and Cards live under View. Node, Text, and Card sliders scale those pieces. Gravity stays on whenever Physics is on. Advanced offers three-step Spread, Link length, and Padding — those take effect while Physics is on. Use Reorg if you want the map to resettle from a fresh layout. View rotation (compass) and these prefs stay on this device — Reset view prefs restores defaults."
           />
         </div>
       </section>

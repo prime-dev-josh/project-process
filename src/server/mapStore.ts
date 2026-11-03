@@ -117,6 +117,7 @@ function groupJson(group: GraphGroup) {
   return {
     id: group.id.slice(0, 160),
     title: (group.title || "Untitled group").slice(0, 400),
+    color: group.color ? group.color.slice(0, 32) : null,
   };
 }
 
@@ -153,6 +154,7 @@ function rowGroup(row: Row): GraphGroup {
   return {
     id: String(row.id),
     title: String(row.title ?? "Untitled group"),
+    color: row.color == null || row.color === "" ? undefined : String(row.color),
   };
 }
 
@@ -331,16 +333,17 @@ async function upsertGroups(tx: SqlTransaction, groups: GraphGroup[], stamp: Sta
     USING (
       SELECT * FROM OPENJSON(@rows) WITH (
         id nvarchar(160) '$.id',
-        title nvarchar(400) '$.title'
+        title nvarchar(400) '$.title',
+        color nvarchar(32) '$.color'
       )
     ) AS s ON t.id = s.id
     WHEN MATCHED THEN UPDATE SET
-      title = s.title, version = t.version + 1, is_deleted = 0,
+      title = s.title, color = s.color, version = t.version + 1, is_deleted = 0,
       updated_rev = @rev, updated_client = @client, updated_at = @updated_at, updated_by = @updated_by
     WHEN NOT MATCHED THEN INSERT (
-      id, title, version, is_deleted, updated_rev, updated_client, updated_at, updated_by
+      id, title, color, version, is_deleted, updated_rev, updated_client, updated_at, updated_by
     ) VALUES (
-      s.id, s.title, 1, 0, @rev, @client, @updated_at, @updated_by
+      s.id, s.title, s.color, 1, 0, @rev, @client, @updated_at, @updated_by
     )
     OUTPUT INSERTED.id, INSERTED.version;
   `);

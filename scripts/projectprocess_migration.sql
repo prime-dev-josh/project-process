@@ -86,6 +86,7 @@ IF OBJECT_ID(N'projectprocess.Group', N'U') IS NULL
 CREATE TABLE projectprocess.[Group] (
     id nvarchar(160) NOT NULL CONSTRAINT PK_projectprocess_Group PRIMARY KEY,
     title nvarchar(400) NOT NULL,
+    color nvarchar(32) NULL,
     version int NOT NULL CONSTRAINT DF_projectprocess_Group_ver DEFAULT (1),
     is_deleted bit NOT NULL CONSTRAINT DF_projectprocess_Group_del DEFAULT (0),
     updated_rev bigint NOT NULL CONSTRAINT DF_projectprocess_Group_rev DEFAULT (0),
@@ -102,4 +103,7 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_projectprocess_Node_g
 GO
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_projectprocess_Group_rev' AND object_id = OBJECT_ID(N'projectprocess.Group'))
     CREATE INDEX IX_projectprocess_Group_rev ON projectprocess.[Group] (updated_rev);
+GO
+IF COL_LENGTH(N'projectprocess.Group', N'color') IS NULL
+    ALTER TABLE projectprocess.[Group] ADD color nvarchar(32) NULL;
 GO

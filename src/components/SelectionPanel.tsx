@@ -21,6 +21,7 @@ type Props = {
   onDelete: () => void;
   onAssignGroup: (groupId: string | null) => void;
   onCreateGroup: (title: string) => void;
+  onUpdateGroup: (groupId: string, patch: { title?: string; color?: string }) => void;
 };
 
 export default function SelectionPanel({
@@ -34,6 +35,7 @@ export default function SelectionPanel({
   onDelete,
   onAssignGroup,
   onCreateGroup,
+  onUpdateGroup,
 }: Props) {
   const statuses = new Set(nodes.map((n) => nodeWorkflowStatus(n, colorBy)));
   const sharedStatus = statuses.size === 1 ? [...statuses][0] : null;
@@ -62,13 +64,13 @@ export default function SelectionPanel({
           groupId={sharedGroupId}
           groups={groups}
           nodes={allNodes}
-          colorBy={colorBy}
           mixed={mixedGroups}
           emptyLabel="Multiple"
           onChange={(groupId) => {
             if (mixedGroups || sharedGroupId !== groupId) onAssignGroup(groupId);
           }}
           onCreate={onCreateGroup}
+          onUpdateGroup={onUpdateGroup}
         />
       </div>
       <span className="mb-1 block text-[8px] font-bold tracking-wide text-[var(--muted)] uppercase">Status</span>

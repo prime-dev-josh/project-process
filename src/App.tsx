@@ -18,7 +18,7 @@ import SelectionPanel from "./components/SelectionPanel";
 import SyncChangesFeed from "./components/SyncChangesFeed";
 import { nodeColor } from "./graph/colors";
 import type { WorkflowStatus } from "./graph/workflowStatus";
-import { UNGROUPED_FILTER, groupTitle, pruneEmptyGroups } from "./graph/groups";
+import { UNGROUPED_FILTER, groupTitle, nextGroupColor, normalizeGroupColor, pruneEmptyGroups } from "./graph/groups";
 import { addChild, addLink, blankNode, deleteNode, insertNodeBetween } from "./graph/ops";
 import { mergeViewSettings } from "./graph/viewSettings";
 import { degToRad, rotatePoint, viewCoverOffset } from "./graph/viewRotation";
@@ -537,10 +537,28 @@ export default function App() {
     const id = newId();
     const set = new Set(ids);
     const nextNodes = graphStore.state.nodes.map((n) => (set.has(n.id) ? { ...n, groupId: id } : n));
-    const nextGroups: GraphGroup[] = [...graphStore.state.groups, { id, title: groupTitle(title) }];
+    const nextGroups: GraphGroup[] = [...graphStore.state.groups, { id, title: groupTitle(title), color: nextGroupColor(graphStore.state.groups) }];
     commitGraph(`Grouped ${ids.length} nodes`, {
       nodes: nextNodes,
       groups: pruneEmptyGroups(nextNodes, nextGroups),
+    });
+  }
+
+  function updateGroup(groupId: string, patch: { title?: string; color?: string }) {
+    const current = graphStore.state.groups.find((group) => group.id === groupId);
+    if (!current) return;
+    const title = patch.title !== undefined ? groupTitle(patch.title) : current.title;
+    const color = patch.color !== undefined ? normalizeGroupColor(patch.color) ?? current.color : current.color;
+    if (title === current.title && (color ?? "") === (current.color ?? "")) return;
+    const renamed = title !== current.title;
+    const recoloured = (color ?? "") !== (current.color ?? "");
+    const label = renamed && recoloured
+      ? `Updated ${title}`
+      : renamed
+        ? `Renamed group to ${title}`
+        : `Changed color of ${title}`;
+    commitGraph(label, {
+      groups: graphStore.state.groups.map((group) => (group.id === groupId ? { ...group, title, color } : group)),
     });
   }
 
@@ -781,7 +799,7 @@ export default function App() {
       settingsRef.current = next;
       return next;
     });
-    window.setTimeout(() => graphRef.current?.applyViewForces?.({ rebuildStructure: true, reheat: true }), 20);
+    window.setTimeout(() => graphRef.current?.applyViewForces?.({ rebuildStructure: true, reheat: true, reorg: true }), 20);
   }
 
   function screenOf(x: number, y: number) {
@@ -938,6 +956,7 @@ export default function App() {
               onCreateGroup={(title) => {
                 if (editing) createGroup([editing.id], title);
               }}
+              onUpdateGroup={updateGroup}
             />
           </aside>
           <div className="flex shrink-0 flex-col pt-2 pl-1.5">
@@ -1134,6 +1153,7 @@ export default function App() {
             updateSelectedNodes({ groupId }, `Moved ${selectedIds.length} nodes into ${groupName}`);
           }}
           onCreateGroup={(title) => createGroup(selectedIds, title)}
+          onUpdateGroup={updateGroup}
         />
       )}
 

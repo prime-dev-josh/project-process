@@ -9,13 +9,24 @@ export const GROUP_MEMBRANE_PAD = 10;
 /** Link corridor as a fraction of the thinner member disk. */
 export const GROUP_LINK_CAPSULE = 0.58;
 
-/** Clear air between two group membranes so they never paint over each other. */
-export const GROUP_MEMBRANE_GAP = 16;
+/** Thin separation between adjacent group membranes (cells pressed together, not merged). */
+export const GROUP_MEMBRANE_GAP = 6;
+
+/** Local melt along member links — low enough that ring/cycle voids stay hollow. */
+export const GROUP_CONTOUR_BLEND_CAP = 11;
+
+/** Drop marching-square speckles smaller than this (px²). */
+export const GROUP_CONTOUR_MIN_LOOP_AREA = 72;
+
+/** Only keep interior holes that read as a courtyard, not every graph cycle. */
+export const GROUP_HOLE_MIN_AREA = 3200;
+export const GROUP_HOLE_MIN_OUTER_FRACTION = 0.12;
 
 export type GroupFieldSpec = {
   disks: Disk[];
   capsules: Capsule[];
   blend: number;
+  hull?: Point[];
 };
 
 function cross(o: Point, a: Point, b: Point) {
@@ -82,27 +93,71 @@ function distToSeg(px: number, py: number, ax: number, ay: number, bx: number, b
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
 
-/** Polynomial smooth-min so nearby disks melt into one membrane instead of a peanut. */
-function smin(a: number, b: number, k: number) {
-  if (k <= 0) return Math.min(a, b);
-  const h = Math.max(k - Math.abs(a - b), 0) / k;
-  return Math.min(a, b) - h * h * k * 0.25;
+export function groupBlobPad(disks: Disk[], blend?: number) {
+  if (!disks.length) return Math.max(GROUP_MEMBRANE_PAD, blend ?? 0);
+  const avg = disks.reduce((sum, d) => sum + d.r, 0) / disks.length;
+  return Math.max(18, avg * 0.42, (blend ?? avg) * 0.55);
 }
 
-export function signedGroupField(x: number, y: number, disks: Disk[], capsules: Capsule[] = [], blend = 0) {
-  let best = Infinity;
+/** Rounded enclosure around every member — a loose membrane, not a link tube. */
+export function groupBlobHull(disks: Disk[], pad?: number): Point[] {
+  if (!disks.length) return [];
+  if (disks.length === 1) {
+    const disk = disks[0];
+    const r = disk.r + (pad ?? groupBlobPad(disks));
+    const ring: Point[] = [];
+    for (let i = 0; i < 28; i += 1) {
+      const a = (i / 28) * Math.PI * 2;
+      ring.push({ x: disk.x + Math.cos(a) * r, y: disk.y + Math.sin(a) * r });
+    }
+    return ring;
+  }
+  const pts: Point[] = [];
   for (const disk of disks) {
-    const d = Math.hypot(x - disk.x, y - disk.y) - disk.r;
-    best = best === Infinity ? d : smin(best, d, blend);
+    for (let i = 0; i < 8; i += 1) {
+      const a = (i / 8) * Math.PI * 2;
+      pts.push({ x: disk.x + Math.cos(a) * disk.r, y: disk.y + Math.sin(a) * disk.r });
+    }
   }
-  for (const cap of capsules) {
-    const d = distToSeg(x, y, cap.a.x, cap.a.y, cap.b.x, cap.b.y) - cap.r;
-    best = best === Infinity ? d : smin(best, d, blend);
-  }
-  return best;
+  const hull = convexHull(pts);
+  if (hull.length < 3) return hull;
+  return offsetConvexHull(hull, pad ?? groupBlobPad(disks));
 }
 
-/** Inside this group only where no other group claims the point, plus a visible gap. */
+function smoothBlob(pts: Point[]) {
+  if (pts.length < 3) return pts.slice();
+  return laplacian(chaikin(pts, 8), 0.64, 5);
+}
+
+function signedConvexLoop(x: number, y: number, hull: Point[]) {
+  if (hull.length < 3) return Infinity;
+  let inside = true;
+  let minDist = Infinity;
+  const n = hull.length;
+  for (let i = 0; i < n; i += 1) {
+    const a = hull[i];
+    const b = hull[(i + 1) % n];
+    const cross = (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
+    if (cross < 0) inside = false;
+    minDist = Math.min(minDist, distToSeg(x, y, a.x, a.y, b.x, b.y));
+  }
+  return inside ? -minDist : minDist;
+}
+
+export function withBlobHull(spec: GroupFieldSpec): GroupFieldSpec {
+  if (spec.hull && spec.hull.length >= 3) return spec;
+  return { ...spec, hull: groupBlobHull(spec.disks, groupBlobPad(spec.disks, spec.blend)) };
+}
+
+function blobField(x: number, y: number, spec: GroupFieldSpec) {
+  const ready = withBlobHull(spec);
+  return signedConvexLoop(x, y, ready.hull ?? []);
+}
+
+export function signedGroupField(x: number, y: number, disks: Disk[], _capsules: Capsule[] = [], blend = 0) {
+  return signedConvexLoop(x, y, groupBlobHull(disks, groupBlobPad(disks, blend)));
+}
+
 export function exclusiveGroupField(
   x: number,
   y: number,
@@ -110,12 +165,29 @@ export function exclusiveGroupField(
   others: GroupFieldSpec[] = [],
   gap = GROUP_MEMBRANE_GAP,
 ) {
-  let d = signedGroupField(x, y, self.disks, self.capsules, self.blend);
-  for (const other of others) {
-    const o = signedGroupField(x, y, other.disks, other.capsules, other.blend);
-    d = Math.max(d, -o + gap);
-  }
+  let d = blobField(x, y, self);
+  for (const other of others) d = Math.max(d, -blobField(x, y, other) + gap);
   return d;
+}
+
+export function exclusiveGroupFieldContour(
+  x: number,
+  y: number,
+  self: GroupFieldSpec,
+  others: GroupFieldSpec[] = [],
+  gap = GROUP_MEMBRANE_GAP,
+) {
+  return exclusiveGroupField(x, y, self, others, gap);
+}
+
+export function pointInGroupMembrane(
+  x: number,
+  y: number,
+  self: GroupFieldSpec,
+  others: GroupFieldSpec[] = [],
+  gap = GROUP_MEMBRANE_GAP,
+) {
+  return exclusiveGroupFieldContour(x, y, self, others, gap) < 0;
 }
 
 export function groupFieldGradient(x: number, y: number, disks: Disk[], capsules: Capsule[] = [], blend = 0) {
@@ -194,10 +266,6 @@ function laplacian(pts: Point[], amount = 0.5, iterations = 3): Point[] {
   return cur;
 }
 
-function smoothLoop(pts: Point[]) {
-  return laplacian(chaikin(pts, 7), 0.55, 3);
-}
-
 function stitchLoops(segments: Array<[Point, Point]>): Point[][] {
   const unused = new Map<string, [Point, Point]>();
   const adj = new Map<string, Point[]>();
@@ -243,12 +311,20 @@ function stitchLoops(segments: Array<[Point, Point]>): Point[][] {
   return loops;
 }
 
-function fieldBounds(disks: Disk[], capsules: Capsule[], extra: number) {
+function fieldBounds(disks: Disk[], capsules: Capsule[], extra: number, hull?: Point[]) {
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
   let minR = Infinity;
+  if (hull?.length) {
+    for (const p of hull) {
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x);
+      maxY = Math.max(maxY, p.y);
+    }
+  }
   for (const disk of disks) {
     minX = Math.min(minX, disk.x - disk.r);
     minY = Math.min(minY, disk.y - disk.r);
@@ -281,18 +357,19 @@ export function groupMemberRadius(
   return body + GROUP_MEMBRANE_PAD;
 }
 
-function contourCellSize(minR: number, spanX: number, spanY: number) {
+function contourCellSize(minR: number, spanX: number, spanY: number, budget: number) {
   const detail = Math.max(minR * 0.4, 6);
-  const budget = 72;
   return Math.max(detail, spanX / budget, spanY / budget);
 }
 
-function fieldContours(self: GroupFieldSpec, others: GroupFieldSpec[] = []): Point[][] {
-  const margin = Math.max(self.blend * 0.7, 8);
-  const { minX, minY, maxX, maxY, minR } = fieldBounds(self.disks, self.capsules, margin);
+function fieldContours(self: GroupFieldSpec, others: GroupFieldSpec[] = [], quality: "normal" | "fast" = "normal"): Point[][] {
+  const ready = withBlobHull(self);
+  const otherReady = others.map(withBlobHull);
+  const margin = Math.max(ready.blend * 0.7, GROUP_MEMBRANE_GAP + 8);
+  const { minX, minY, maxX, maxY, minR } = fieldBounds(ready.disks, ready.capsules, margin, ready.hull);
   const spanX = Math.max(maxX - minX, 1);
   const spanY = Math.max(maxY - minY, 1);
-  const cell = contourCellSize(minR, spanX, spanY);
+  const cell = contourCellSize(minR, spanX, spanY, quality === "fast" ? 44 : 72);
   const cols = Math.max(2, Math.ceil(spanX / cell));
   const rows = Math.max(2, Math.ceil(spanY / cell));
   const values: number[][] = [];
@@ -300,7 +377,7 @@ function fieldContours(self: GroupFieldSpec, others: GroupFieldSpec[] = []): Poi
     const row: number[] = [];
     const y = minY + i * cell;
     for (let j = 0; j <= cols; j += 1) {
-      row.push(exclusiveGroupField(minX + j * cell, y, self, others));
+      row.push(exclusiveGroupField(minX + j * cell, y, ready, otherReady));
     }
     values.push(row);
   }
@@ -373,9 +450,60 @@ function fieldContours(self: GroupFieldSpec, others: GroupFieldSpec[] = []): Poi
     }
   }
 
-  return stitchLoops(segments)
-    .map((loop) => smoothLoop(loop))
-    .sort((a, b) => Math.abs(polygonArea(b)) - Math.abs(polygonArea(a)));
+  return filterCellLoops(
+    stitchLoops(segments)
+      .map((loop) => smoothBlob(loop))
+      .sort((a, b) => Math.abs(polygonArea(b)) - Math.abs(polygonArea(a))),
+  );
+}
+
+function filterCellLoops(loops: Point[][]): Point[][] {
+  return loops.filter((loop) => loop.length >= 3 && Math.abs(polygonArea(loop)) >= GROUP_CONTOUR_MIN_LOOP_AREA);
+}
+
+export function largestCellLoop(loops: Point[][]): Point[] | null {
+  return classifyMembraneLoops(loops).outers[0] ?? null;
+}
+
+function loopCentroid(loop: Point[]): Point {
+  const n = loop.length || 1;
+  let x = 0;
+  let y = 0;
+  for (const p of loop) {
+    x += p.x;
+    y += p.y;
+  }
+  return { x: x / n, y: y / n };
+}
+
+function isLargeCourtyard(hole: Point[], outerArea: number) {
+  const area = Math.abs(polygonArea(hole));
+  return area >= GROUP_HOLE_MIN_AREA && area >= outerArea * GROUP_HOLE_MIN_OUTER_FRACTION;
+}
+
+/** Outer envelopes plus large enclosed voids. Mesh cycles stay filled so a group reads as one blob. */
+export function classifyMembraneLoops(loops: Point[][]): { outers: Point[][]; holes: Point[][] } {
+  const ranked = loops
+    .filter((loop) => loop.length >= 3)
+    .map((loop) => ({ loop, area: Math.abs(polygonArea(loop)) }))
+    .sort((a, b) => b.area - a.area);
+  const outers: Point[][] = [];
+  const holes: Point[][] = [];
+  for (const item of ranked) {
+    const inside = loopCentroid(item.loop);
+    const parent = outers.find((outer) => pointInPolygon(inside.x, inside.y, outer));
+    if (!parent) {
+      outers.push(item.loop);
+      continue;
+    }
+    if (isLargeCourtyard(item.loop, Math.abs(polygonArea(parent)))) holes.push(item.loop);
+  }
+  return { outers, holes };
+}
+
+export function membranePaintLoops(loops: Point[][]): Point[][] {
+  const { outers, holes } = classifyMembraneLoops(loops);
+  return [...outers, ...holes];
 }
 
 export function groupFieldBlend(disks: Disk[]) {
@@ -384,47 +512,27 @@ export function groupFieldBlend(disks: Disk[]) {
   return Math.max(14, avg * 0.58);
 }
 
-/** Padded, blended membrane around node disks and the links that join them. */
+/** Simple membrane around every member. Other groups flatten the shared edge. */
 export function cellHulls(
   disks: Disk[],
   capsules: Capsule[] = [],
   blend?: number,
   others: GroupFieldSpec[] = [],
+  quality: "normal" | "fast" = "normal",
 ): Point[][] {
   if (!disks.length) return [];
   const k = blend ?? groupFieldBlend(disks);
-  const self = { disks, capsules, blend: k };
-  if (disks.length === 1 && !capsules.length && !others.length) {
-    const disk = disks[0];
-    const count = 32;
-    const ring: Point[] = [];
-    for (let i = 0; i < count; i += 1) {
-      const a = (i / count) * Math.PI * 2;
-      ring.push({ x: disk.x + Math.cos(a) * disk.r, y: disk.y + Math.sin(a) * disk.r });
-    }
-    return [smoothLoop(ring)];
+  const self = withBlobHull({ disks, capsules, blend: k });
+  if (!others.length) {
+    const hull = self.hull ?? [];
+    return hull.length >= 3 ? [smoothBlob(hull)] : [];
   }
-  return fieldContours(self, others);
+  return fieldContours(self, others.map(withBlobHull), quality);
 }
 
 /** Convex stand-in used while the simulation is moving — much cheaper than marching squares. */
 export function cheapCellHulls(disks: Disk[], capsules: Capsule[] = [], blend?: number): Point[][] {
-  if (!disks.length) return [];
-  if (disks.length === 1 && !capsules.length) return cellHulls(disks, capsules, blend);
-  const pad = blend ?? groupFieldBlend(disks);
-  const pts: Point[] = [];
-  for (const disk of disks) {
-    pts.push({ x: disk.x, y: disk.y });
-    pts.push({ x: disk.x + disk.r, y: disk.y });
-    pts.push({ x: disk.x - disk.r, y: disk.y });
-    pts.push({ x: disk.x, y: disk.y + disk.r });
-    pts.push({ x: disk.x, y: disk.y - disk.r });
-  }
-  for (const cap of capsules) {
-    pts.push(cap.a, cap.b);
-  }
-  const hull = offsetConvexHull(convexHull(pts), Math.max(pad * 0.35, 8));
-  return hull.length >= 3 ? [hull] : [];
+  return cellHulls(disks, capsules, blend);
 }
 
 /** Largest membrane — kept for callers that only need one ring. */
@@ -433,10 +541,9 @@ export function cellHull(disks: Disk[], capsules: Capsule[] = [], blend?: number
 }
 
 /** Smooth closed path through hull vertices so the membrane reads as a cell, not a polygon. */
-export function traceCellPath(ctx: CanvasRenderingContext2D, hull: Point[]) {
+export function appendCellPath(ctx: CanvasRenderingContext2D, hull: Point[]) {
   if (hull.length < 3) return;
   const n = hull.length;
-  ctx.beginPath();
   ctx.moveTo((hull[n - 1].x + hull[0].x) / 2, (hull[n - 1].y + hull[0].y) / 2);
   for (let i = 0; i < n; i += 1) {
     const cur = hull[i];
@@ -444,6 +551,33 @@ export function traceCellPath(ctx: CanvasRenderingContext2D, hull: Point[]) {
     ctx.quadraticCurveTo(cur.x, cur.y, (cur.x + next.x) / 2, (cur.y + next.y) / 2);
   }
   ctx.closePath();
+}
+
+export function traceCellPath(ctx: CanvasRenderingContext2D, hull: Point[]) {
+  ctx.beginPath();
+  appendCellPath(ctx, hull);
+}
+
+/** Fill the group envelope; only large courtyards stay hollow. */
+export function fillCellMembrane(ctx: CanvasRenderingContext2D, loops: Point[][]) {
+  const paint = membranePaintLoops(loops);
+  if (!paint.length) return;
+  ctx.beginPath();
+  for (const loop of paint) appendCellPath(ctx, loop);
+  ctx.fill("evenodd");
+}
+
+export function strokeCellMembrane(ctx: CanvasRenderingContext2D, loops: Point[][]) {
+  for (const loop of membranePaintLoops(loops)) {
+    traceCellPath(ctx, loop);
+    ctx.stroke();
+  }
+}
+
+export function pointInCellMembrane(x: number, y: number, loops: Point[][]) {
+  const { outers, holes } = classifyMembraneLoops(loops);
+  if (!outers.some((outer) => pointInPolygon(x, y, outer))) return false;
+  return !holes.some((hole) => pointInPolygon(x, y, hole));
 }
 
 export function pointInCell(x: number, y: number, hull: Point[]) {
@@ -464,14 +598,55 @@ export type GroupFieldBody = {
   disks: Disk[];
   capsules: Capsule[];
   blend: number;
+  hull?: Point[];
   cx: number;
   cy: number;
 };
 
+function pushOutOfGroupField(
+  node: {
+    id: string;
+    x?: number;
+    y?: number;
+    vx?: number;
+    vy?: number;
+    fx?: number;
+    fy?: number;
+    groupId?: string | null;
+    size?: number;
+  },
+  body: GroupFieldBody,
+  others: GroupFieldBody[],
+  nodeClearance: (node: { size?: number }) => number,
+  strength: number,
+) {
+  if (body.memberIds.has(node.id)) return;
+  const x = node.x ?? 0;
+  const y = node.y ?? 0;
+  const clearance = nodeClearance(node);
+  const d = exclusiveGroupField(x, y, body, others);
+  if (d >= clearance) return;
+  let g = exclusiveGroupFieldGradient(x, y, body, others);
+  if (!g.x && !g.y) {
+    const awayX = x - body.cx;
+    const awayY = y - body.cy;
+    const len = Math.hypot(awayX, awayY) || 1;
+    g = { x: awayX / len, y: awayY / len };
+  }
+  const overlap = clearance - d;
+  const crossGroup = node.groupId ? 1.35 : 1;
+  const kick = overlap * strength * crossGroup;
+  node.vx = (node.vx ?? 0) + g.x * kick;
+  node.vy = (node.vy ?? 0) + g.y * kick;
+  node.x = x + g.x * overlap * 0.45;
+  node.y = y + g.y * overlap * 0.45;
+}
+
 /** Pushes nodes that are not in a group out of that group's membrane. */
 export function forceGroupExclusion(
-  getBodies: (nodes: { id: string; x?: number; y?: number; size?: number; fx?: number; fy?: number; vx?: number; vy?: number }[]) => GroupFieldBody[],
+  getBodies: (nodes: { id: string; x?: number; y?: number; size?: number; fx?: number; fy?: number; vx?: number; vy?: number; groupId?: string | null }[]) => GroupFieldBody[],
   nodeClearance: (node: { size?: number }) => number,
+  strengthScale: () => number = () => 1,
 ) {
   type SimNode = {
     id: string;
@@ -488,30 +663,12 @@ export function forceGroupExclusion(
     if (!nodes.length) return;
     const bodies = getBodies(nodes);
     if (!bodies.length) return;
-    const strength = 0.7;
+    const strength = 0.82 * strengthScale();
     for (const node of nodes) {
       if (node.fx != null || node.fy != null) continue;
-      const x = node.x ?? 0;
-      const y = node.y ?? 0;
-      const clearance = nodeClearance(node);
       for (const body of bodies) {
-        if (body.memberIds.has(node.id)) continue;
         const others = bodies.filter((item) => item !== body);
-        const d = exclusiveGroupField(x, y, body, others);
-        if (d >= clearance) continue;
-        let g = exclusiveGroupFieldGradient(x, y, body, others);
-        if (!g.x && !g.y) {
-          const awayX = x - body.cx;
-          const awayY = y - body.cy;
-          const len = Math.hypot(awayX, awayY) || 1;
-          g = { x: awayX / len, y: awayY / len };
-        }
-        const overlap = clearance - d;
-        const kick = overlap * strength * alpha;
-        node.vx = (node.vx ?? 0) + g.x * kick;
-        node.vy = (node.vy ?? 0) + g.y * kick;
-        node.x = x + g.x * overlap * 0.45;
-        node.y = y + g.y * overlap * 0.45;
+        pushOutOfGroupField(node, body, others, nodeClearance, strength * alpha);
       }
     }
   }
@@ -519,4 +676,37 @@ export function forceGroupExclusion(
     nodes = next;
   };
   return force;
+}
+
+/** Deterministic pass so named groups settle like non-overlapping cells after Reorg. */
+export function* clearGroupBlobOverlaps(
+  getBodies: () => GroupFieldBody[],
+  nodes: {
+    id: string;
+    x?: number;
+    y?: number;
+    fx?: number;
+    fy?: number;
+    vx?: number;
+    vy?: number;
+    groupId?: string | null;
+    size?: number;
+  }[],
+  nodeClearance: (node: { size?: number }) => number,
+  sweeps = 36,
+): Generator<void, void, unknown> {
+  const live = nodes.filter((n) => Number.isFinite(n.x) && Number.isFinite(n.y));
+  let comparisons = 0;
+  for (let pass = 0; pass < sweeps; pass += 1) {
+    const bodies = getBodies();
+    if (bodies.length < 2) break;
+    for (const node of live) {
+      if (node.fx != null || node.fy != null) continue;
+      for (const body of bodies) {
+        if (++comparisons % 256 === 0) yield;
+        const others = bodies.filter((item) => item !== body);
+        pushOutOfGroupField(node, body, others, nodeClearance, 0.95);
+      }
+    }
+  }
 }

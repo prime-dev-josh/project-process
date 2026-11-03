@@ -39,11 +39,12 @@ type Props = {
   style?: CSSProperties;
   onSave: (patch: Partial<NodeEditPatch>) => void;
   onCreateGroup: (title: string) => void;
+  onUpdateGroup?: (groupId: string, patch: { title?: string; color?: string }) => void;
 };
 
 const SAVED_FLASH_MS = 1600;
 
-export default function EditNodePanel({ node, nodes, groups, colorBy, embedded = false, style, onSave, onCreateGroup }: Props) {
+export default function EditNodePanel({ node, nodes, groups, colorBy, embedded = false, style, onSave, onCreateGroup, onUpdateGroup }: Props) {
   const accent = nodeColor(node, colorBy);
   const unsaved = useStore(draftStore, (s) => s.labels);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -140,11 +141,11 @@ export default function EditNodePanel({ node, nodes, groups, colorBy, embedded =
         groupId={node.groupId ?? null}
         groups={groups}
         nodes={nodes}
-        colorBy={colorBy}
         onChange={(groupId) => {
           if ((node.groupId ?? null) !== groupId) save({ groupId });
         }}
         onCreate={onCreateGroup}
+        onUpdateGroup={onUpdateGroup}
       />
       <label className={fieldLabel}>
         Size <span className="font-normal normal-case tracking-normal">· saves instantly</span>

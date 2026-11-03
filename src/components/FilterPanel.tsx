@@ -8,10 +8,11 @@ import {
 } from "../graph/workflowStatus";
 import { users } from "../data/users";
 import { FORCE_INTENSITY, FORCE_INTENSITY_IDS, nearestForceLevel } from "../graph/viewSettings";
-import { cx, field, sideH2, toolBtnOn } from "../styles";
+import { cx, field, sideH2 } from "../styles";
 import type { ColorBy, GraphGroup, GraphNode, GraphSettings } from "../types";
 import { isFiltered } from "../graph/visibility";
 import GroupFilterPicker from "./GroupFilterPicker";
+import GroupManager, { type GroupEditPatch } from "./GroupManager";
 import PersonFace from "./PersonFace";
 import PersonFilterPicker from "./PersonFilterPicker";
 import SegmentedControl from "./SegmentedControl";
@@ -37,6 +38,8 @@ type Props = {
   onTogglePhysics: () => void;
   onToggleCards: () => void;
   onResetSettings: () => void;
+  selectedNodeId?: string | null;
+  onUpdateGroup: (groupId: string, patch: GroupEditPatch) => void;
 };
 
 function toggleStatus(list: WorkflowStatus[], status: WorkflowStatus) {
@@ -63,9 +66,19 @@ export default function FilterPanel({
   onTogglePhysics,
   onToggleCards,
   onResetSettings,
+  selectedNodeId = null,
+  onUpdateGroup,
 }: Props) {
   const stats = useMemo(() => workflowStats(nodes, colorBy), [nodes, colorBy]);
   const [advanced, setAdvanced] = useState(false);
+  const [manageGroups, setManageGroups] = useState(false);
+
+  useEffect(() => {
+    if (selectedNodeId) {
+      setAdvanced(false);
+      setManageGroups(false);
+    }
+  }, [selectedNodeId]);
   const personRowProbeRef = useRef<HTMLDivElement>(null);
   const [personRowCompact, setPersonRowCompact] = useState(false);
   const hasFilters =
@@ -218,10 +231,22 @@ export default function FilterPanel({
             <GroupFilterPicker
               groups={groups}
               nodes={nodes}
-              colorBy={colorBy}
               selected={groupFilters}
               onChange={onGroupFilters}
             />
+            <button
+              type="button"
+              className="mt-1.5 cursor-pointer border-0 bg-transparent p-0 text-[10px] font-semibold tracking-wide text-[var(--muted)] uppercase hover:text-[var(--text)]"
+              aria-expanded={manageGroups}
+              onClick={() => setManageGroups((open) => !open)}
+            >
+              {manageGroups ? "▾" : "▸"} Manage groups
+            </button>
+            {manageGroups ? (
+              <div className="mt-1.5">
+                <GroupManager groups={groups} nodes={nodes} onUpdateGroup={onUpdateGroup} />
+              </div>
+            ) : null}
           </div>
         ) : null}
       </section>
@@ -323,14 +348,6 @@ export default function FilterPanel({
               titles={["Least padding", "Balanced", "Most padding"]}
               onChange={(collide) => onSettings({ collide })}
             />
-            <button
-              type="button"
-              className={cx(toolBtnOn, "mt-2.5 w-full py-2 text-center")}
-              title="Apply the force levels above and let the map settle (same as Reorg under Map)"
-              onClick={onReorg}
-            >
-              Apply layout
-            </button>
           </div>
         ) : null}
       </section>

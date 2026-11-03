@@ -1,21 +1,26 @@
 import { forceCollide, forceRadial } from "d3-force";
+import { clearLayoutOverlaps, layoutRadius } from "../graph/layoutClearance";
 import { memo, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import ForceGraph2D, { type ForceGraphMethods } from "react-force-graph-2d";
 import { users } from "../data/users";
 import { personStyle } from "../data/personStyle";
 import { NODE_FILL, graphTheme, nodeColor, sizeForLevel, withAlpha } from "../graph/colors";
-import { groupStatusColor } from "../graph/groups";
+import { groupColorInk, groupPaintColor } from "../graph/groups";
 import {
   GROUP_LINK_CAPSULE,
   GROUP_MEMBRANE_PAD,
   cellHulls,
-  cheapCellHulls,
+  groupBlobHull,
+  groupBlobPad,
   groupFieldBlend,
   groupMemberRadius,
+  clearGroupBlobOverlaps,
   forceGroupExclusion,
   hullApex,
-  pointInCell,
-  traceCellPath,
+  fillCellMembrane,
+  largestCellLoop,
+  pointInCellMembrane,
+  strokeCellMembrane,
   type Capsule,
   type Disk,
   type GroupFieldBody,
@@ -37,7 +42,7 @@ import { loadPersonPhoto } from "../lib/personPhoto";
 import type { ArrowStyle, GraphGroup, GraphLink, GraphNode, GraphSettings } from "../types";
 
 export type GraphHandle = ForceGraphMethods<GraphNode, GraphLink> & {
-  applyViewForces?: (opts?: { reheat?: boolean; rebuildStructure?: boolean }) => void;
+  applyViewForces?: (opts?: { reheat?: boolean; rebuildStructure?: boolean; reorg?: boolean }) => void;
 };
 
 /** Shift adds to the selection, Ctrl/⌘ subtracts from it, otherwise the lasso replaces it. */
@@ -200,6 +205,7 @@ function groupFieldBodies(
       disks,
       capsules,
       blend,
+      hull: groupBlobHull(disks, groupBlobPad(disks, blend)),
       cx,
       cy,
     });
@@ -579,6 +585,74 @@ function GraphCanvas({
   const collideRef = useRef(settings.collide);
   const enlargeRef = useRef(settings.enlarge);
   const simulatingRef = useRef(false);
+  const reorgPending = useRef(false);
+  const refinementFrame = useRef(0);
+  const [refining, setRefining] = useState(false);
+
+  function cancelRefinement() {
+    cancelAnimationFrame(refinementFrame.current);
+    refinementFrame.current = 0;
+    reorgPending.current = false;
+    setRefining(false);
+  }
+
+  // Cancel stale work when a different graph is supplied or the canvas unmounts.
+  useEffect(() => () => {
+    cancelAnimationFrame(refinementFrame.current);
+    refinementFrame.current = 0;
+    reorgPending.current = false;
+  }, [graphData]);
+  useEffect(() => {
+    setRefining(false);
+    applyViewForces({ rebuildStructure: true });
+  }, [graphData]);
+
+  function finishReorg() {
+    reorgPending.current = false;
+    setRefining(true); // Phase boundary only; no per-frame React updates.
+    const enlarge = viewScale(enlargeRef.current);
+    const live = liveEngineNodes();
+    const layoutWork = clearLayoutOverlaps(live, linksRef.current, enlarge, 96, Math.max(14, collideRef.current + 12));
+    const blobWork =
+      groupsRef.current.length > 1
+        ? clearGroupBlobOverlaps(
+            () => groupFieldBodies(live, linksRef.current, groupsRef.current, enlarge),
+            live,
+            (node) => collideRef.current + (node.size ?? 1) * 8 + 12,
+            56,
+          )
+        : null;
+    let phase: Generator<void, void, unknown> = layoutWork;
+    let frames = 0;
+    const step = () => {
+      const deadline = performance.now() + 4;
+      let done = false;
+      do {
+        const next = phase.next();
+        if (next.done) {
+          if (blobWork && phase === layoutWork) {
+            phase = blobWork;
+            continue;
+          }
+          done = true;
+        }
+      } while (!done && performance.now() < deadline);
+      graphRef.current?.resumeAnimation?.();
+      if (!done && ++frames < 240) {
+        refinementFrame.current = requestAnimationFrame(step);
+        return;
+      }
+      // Let the final coordinates paint before returning to idle and saving once.
+      refinementFrame.current = requestAnimationFrame(() => {
+        refinementFrame.current = 0;
+        hullCacheRef.current.clear();
+        setRefining(false);
+        applyViewForces({ rebuildStructure: true });
+        handlersRef.current.onSettle();
+      });
+    };
+    refinementFrame.current = requestAnimationFrame(step);
+  }
   const hullCacheRef = useRef(new Map<string, { sig: string; hulls: ReturnType<typeof cellHulls>; cheap: boolean }>());
   const hullFrameRef = useRef(0);
   const liveFrameRef = useRef<{ nodes: GraphNode[]; byId: Map<string, GraphNode> } | null>(null);
@@ -588,19 +662,36 @@ function GraphCanvas({
   collideRef.current = settingsRef.current.collide;
   enlargeRef.current = settingsRef.current.enlarge;
 
-  function applyViewForces(opts?: { reheat?: boolean; rebuildStructure?: boolean }) {
+  function applyViewForces(opts?: { reheat?: boolean; rebuildStructure?: boolean; reorg?: boolean }) {
     const fg = graphRef.current;
     if (!fg) return;
     const s = settingsRef.current;
+    if (opts?.reheat || !s.physics) cancelRefinement();
+    if (opts?.reorg && s.physics) {
+      reorgPending.current = true;
+      // Drag holds are temporary; Reorg explicitly releases any interrupted hold.
+      for (const node of liveEngineNodes()) {
+        node.fx = node.fy = undefined;
+        node.vx = node.vy = 0;
+      }
+    }
     collideRef.current = s.collide;
     enlargeRef.current = s.enlarge;
+    const reorg = reorgPending.current;
     const charge = fg.d3Force("charge") as { strength?: (n: number) => void } | undefined;
-    charge?.strength?.(s.physics ? s.charge : 0);
+    charge?.strength?.(s.physics ? Math.max(-200, s.charge + (reorg ? -55 : 0)) : 0);
     const linkForce = fg.d3Force("link") as
-      | { distance?: (n: number) => unknown; strength?: (n: number) => unknown }
+      | { distance?: (n: (link: GraphLink) => number) => unknown; strength?: (n: number) => unknown }
       | undefined;
-    linkForce?.distance?.(s.linkDistance);
-    linkForce?.strength?.(0.28);
+    const byId = new Map(nodesRef.current.map((node) => [node.id, node]));
+    linkForce?.distance?.((link) => {
+      const ends = linkEnds(link);
+      const a = byId.get(ends.source);
+      const b = byId.get(ends.target);
+      const radius = (n: GraphNode | undefined) => n ? layoutRadius(n, viewScale(s.enlarge)) : 8;
+      return radius(a) + radius(b) + 24 + s.linkDistance + (reorg ? 28 : 0);
+    });
+    linkForce?.strength?.(reorg ? 0.2 : 0.28);
     const structureKey = String(s.physics);
     const structureChanged = opts?.rebuildStructure || lastPhysicsStructureKey.current !== structureKey;
     if (structureChanged) {
@@ -616,14 +707,15 @@ function GraphCanvas({
       }
       fg.d3Force(
         "collide",
-        forceCollide((d: GraphNode) => collideRef.current + d.size * 8 + Math.max(0, 4 - d.level)).strength(0.92).iterations(3) as never,
+        forceCollide((d: GraphNode) => layoutRadius(d, viewScale(enlargeRef.current)) + Math.max(3, collideRef.current) + (reorgPending.current ? 16 : 0)).strength(reorgPending.current ? 1 : 0.92).iterations(reorgPending.current ? 8 : 3) as never,
       );
       fg.d3Force(
         "groupField",
-        s.physics
+        groupsRef.current.length
           ? (forceGroupExclusion(
               (live) => groupFieldBodies(live, linksRef.current, groupsRef.current, viewScale(enlargeRef.current)),
-              (node) => collideRef.current + (node.size ?? 1) * 8,
+              (node) => collideRef.current + (node.size ?? 1) * 8 + (reorgPending.current ? 12 : 0),
+              () => (settingsRef.current.physics ? (reorgPending.current ? 1.7 : 1) : 0.5),
             ) as never)
           : null,
       );
@@ -955,7 +1047,7 @@ function GraphCanvas({
         blend: groupFieldBlend(disks),
       }];
     });
-    const cheap = simulatingRef.current;
+    const cheap = simulatingRef.current || interaction.current != null || refining;
     hullFrameRef.current += 1;
     const refreshCheap = cheap && hullFrameRef.current % 3 === 0;
     for (const spec of painted) {
@@ -965,35 +1057,42 @@ function GraphCanvas({
       if (cached && cached.sig === sig && cached.cheap === cheap && (!cheap || !refreshCheap)) {
         hulls = cached.hulls;
       } else if (cheap) {
-        hulls = cheapCellHulls(spec.disks, spec.capsules, spec.blend).filter((hull) => hull.length >= 3);
+        const others = painted.filter((item) => item !== spec).map((item) => ({
+          disks: item.disks,
+          capsules: item.capsules,
+          blend: item.blend,
+        }));
+        hulls = cellHulls(spec.disks, spec.capsules, spec.blend, others, "fast");
         hullCacheRef.current.set(spec.group.id, { sig, hulls, cheap: true });
       } else {
-        const others = painted.filter((item) => item !== spec);
-        hulls = cellHulls(spec.disks, spec.capsules, spec.blend, others).filter((hull) => hull.length >= 3);
+        const others = painted.filter((item) => item !== spec).map((item) => ({
+          disks: item.disks,
+          capsules: item.capsules,
+          blend: item.blend,
+        }));
+        hulls = cellHulls(spec.disks, spec.capsules, spec.blend, others, "normal");
         hullCacheRef.current.set(spec.group.id, { sig, hulls, cheap: false });
       }
       if (!hulls.length) continue;
       const { group, members, disks } = spec;
-      const color = groupStatusColor(members, settings.colorBy);
+      const color = groupPaintColor(group);
       const hovered =
         members.some((n) => n.id === hoveredId) ||
-        Boolean(pointer && hulls.some((hull) => pointInCell(pointer.x, pointer.y, hull)));
+        Boolean(pointer && pointInCellMembrane(pointer.x, pointer.y, hulls));
       ctx.save();
-      ctx.fillStyle = withAlpha(color, theme === "dark" ? 0.16 : 0.12);
+      ctx.fillStyle = withAlpha(color, theme === "dark" ? 0.28 : 0.22);
       ctx.strokeStyle = color;
-      ctx.lineWidth = hovered ? 2.6 / k : 2.1 / k;
       ctx.lineJoin = "round";
-      for (const hull of hulls) {
-        traceCellPath(ctx, hull);
-        ctx.fill();
-        ctx.stroke();
-      }
-      const apex = hulls.reduce<ReturnType<typeof hullApex>>((best, hull) => {
-        const tip = hullApex(hull);
-        if (!tip) return best;
-        if (!best || tip.y < best.y) return tip;
-        return best;
-      }, null);
+      ctx.lineCap = "round";
+      fillCellMembrane(ctx, hulls);
+      ctx.strokeStyle = withAlpha(color, theme === "dark" ? 0.55 : 0.45);
+      ctx.lineWidth = (hovered ? 5.2 : 4.2) / k;
+      strokeCellMembrane(ctx, hulls);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = (hovered ? 2.8 : 2.2) / k;
+      strokeCellMembrane(ctx, hulls);
+      const outer = largestCellLoop(hulls);
+      const apex = outer ? hullApex(outer) : null;
       const title = group.title.trim() || "Untitled group";
       inScreenSpace(ctx, apex?.x ?? disks[0].x, apex?.y ?? disks[0].y, globalScale, () => {
         ctx.font = "700 11px \"Segoe UI\", sans-serif";
@@ -1002,7 +1101,7 @@ function GraphCanvas({
         ctx.beginPath();
         ctx.roundRect(-w / 2, -22, w, 18, 9);
         ctx.fill();
-        ctx.fillStyle = "#0f172a";
+        ctx.fillStyle = groupColorInk(color);
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText(title, 0, -13);
@@ -1163,6 +1262,14 @@ function GraphCanvas({
         handleGraphClick(e.clientX, e.clientY, e.shiftKey, true);
       }}
       onPointerDown={(e) => {
+        if (refinementFrame.current) {
+          cancelRefinement();
+          applyViewForces({ rebuildStructure: true });
+          handlersRef.current.onSettle();
+        } else if (reorgPending.current) {
+          reorgPending.current = false;
+          applyViewForces({ rebuildStructure: true });
+        }
         skipBg.current = false;
         if (placeArmed || connectArmed) return;
         if (e.button === 1 || (e.button === 0 && (spaceHeld.current || e.altKey))) {
@@ -1233,7 +1340,10 @@ function GraphCanvas({
           const g = graphAtClient(e.clientX, e.clientY);
           const k = zoomK();
           const last = it.points[it.points.length - 1];
-          if (!last || Math.hypot(g.x - last.x, g.y - last.y) > 4 / k) {
+          const anchor = it.points[Math.max(0, it.points.length - 2)];
+          // Preserve the start and accumulate distance from a fixed sample,
+          // rather than moving the only point on every sub-4px pointer event.
+          if (it.points.length === 1 || Math.hypot(g.x - anchor.x, g.y - anchor.y) > 4 / k) {
             it.points.push({ x: g.x, y: g.y });
           } else {
             last.x = g.x;
@@ -1270,10 +1380,12 @@ function GraphCanvas({
           const delta = rotatePoint(e.clientX - it.sx, e.clientY - it.sy, 0, 0, -rotationRef.current);
           graphRef.current?.centerAt(it.cx - delta.x / k, it.cy - delta.y / k);
         }
+        graphRef.current?.resumeAnimation?.();
       }}
       onPointerUp={(e) => {
         const it = interaction.current;
         interaction.current = null;
+        graphRef.current?.resumeAnimation?.();
         setGesture(spaceHeld.current ? "pan" : null);
         if (!it && e.button === 0 && (connectArmed || placeArmed)) {
           armedClickHandled.current = false;
@@ -1312,6 +1424,23 @@ function GraphCanvas({
               .map((n) => ({ id: n.id, x: n.x as number, y: n.y as number })),
           );
         }
+      }}
+      onPointerCancel={() => {
+        const it = interaction.current;
+        interaction.current = null;
+        if (it?.type === "drag") releaseHeld(new Set(it.ids));
+        else if (it?.type === "group") releaseHeld(selectedSet);
+        setGesture(null);
+        graphRef.current?.resumeAnimation?.();
+      }}
+      onLostPointerCapture={() => {
+        const it = interaction.current;
+        if (!it) return;
+        interaction.current = null;
+        if (it.type === "drag") releaseHeld(new Set(it.ids));
+        else if (it.type === "group") releaseHeld(selectedSet);
+        setGesture(null);
+        graphRef.current?.resumeAnimation?.();
       }}
       onPointerLeave={() => {
         if (!interaction.current) {
@@ -1354,7 +1483,9 @@ function GraphCanvas({
       enablePanInteraction={false}
       enableZoomInteraction={false}
       enablePointerInteraction={connectArmed || placeArmed}
-      autoPauseRedraw={!highlightFlow}
+      // resumeAnimation alone does not mark the canvas dirty in force-graph.
+      // Existing gesture state changes only at pointer down/up, never on move.
+      autoPauseRedraw={!highlightFlow && !gesture && !refining}
       warmupTicks={settings.physics ? 20 : 0}
       nodeCanvasObjectMode={() => "replace"}
       onZoom={(t) => onZoom(t.k)}
@@ -1365,7 +1496,8 @@ function GraphCanvas({
         simulatingRef.current = false;
         hullCacheRef.current.clear();
         graphRef.current?.resumeAnimation?.();
-        handlersRef.current.onSettle();
+        if (reorgPending.current && !interaction.current) finishReorg();
+        else handlersRef.current.onSettle();
       }}
       onNodeHover={(n) => onHover(n?.id ?? null)}
       onNodeDrag={(n, translate) => {

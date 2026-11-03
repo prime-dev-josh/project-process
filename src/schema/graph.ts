@@ -30,6 +30,7 @@ export const graphNodeSchema = z.object({
 export const graphGroupSchema = z.object({
   id: z.string().min(1).default(() => crypto.randomUUID()),
   title: z.string().default("Untitled group"),
+  color: z.string().optional(),
 });
 
 const linkEndSchema = z

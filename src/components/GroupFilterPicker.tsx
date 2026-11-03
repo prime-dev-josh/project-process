@@ -1,24 +1,17 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { groupStatusColor, groupTitle, UNGROUPED_FILTER } from "../graph/groups";
-import { STATUS_COLORS, WORKFLOW_STATUS_META } from "../graph/workflowStatus";
+import { groupPaintColor, groupTitle, UNGROUPED_FILTER } from "../graph/groups";
 import { placePortaledMenu, portaledMenuListClass, portaledMenuShellClass, type PortaledMenuPos } from "../lib/dropdownPortal";
 import { handleOverlayWheel } from "../lib/overlayScroll";
 import { cx, field } from "../styles";
-import type { ColorBy, GraphGroup, GraphNode } from "../types";
+import type { GraphGroup, GraphNode } from "../types";
 
 type Props = {
   groups: GraphGroup[];
   nodes: GraphNode[];
-  colorBy: ColorBy;
   selected: string[];
   onChange: (next: string[]) => void;
 };
-
-function chipTone(color: string) {
-  const meta = WORKFLOW_STATUS_META.find((item) => STATUS_COLORS[item.id] === color);
-  return { background: meta?.pillBg ?? color, color: meta?.pillText ?? "#1f2937" };
-}
 
 function GroupDot({ color, muted }: { color?: string; muted?: boolean }) {
   return (
@@ -34,7 +27,7 @@ function toggleId(list: string[], id: string) {
   return list.includes(id) ? list.filter((item) => item !== id) : [...list, id];
 }
 
-export default function GroupFilterPicker({ groups, nodes, colorBy, selected, onChange }: Props) {
+export default function GroupFilterPicker({ groups, nodes, selected, onChange }: Props) {
   const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -47,7 +40,7 @@ export default function GroupFilterPicker({ groups, nodes, colorBy, selected, on
 
   const closed = useMemo(() => {
     if (!selected.length) {
-      return { title: "All groups", hint: "Show every node", tone: null as ReturnType<typeof chipTone> | null };
+      return { title: "All groups", hint: "Show every node", tone: null as string | null };
     }
     if (selected.length === 1) {
       const id = selected[0];
@@ -64,7 +57,7 @@ export default function GroupFilterPicker({ groups, nodes, colorBy, selected, on
         return {
           title: groupTitle(group.title),
           hint: `${members.length} node${members.length === 1 ? "" : "s"}`,
-          tone: chipTone(groupStatusColor(members, colorBy)),
+          tone: groupPaintColor(group),
         };
       }
     }
@@ -73,7 +66,7 @@ export default function GroupFilterPicker({ groups, nodes, colorBy, selected, on
       hint: "Combined filter",
       tone: null,
     };
-  }, [selected, groups, nodes, colorBy, ungroupedCount]);
+  }, [selected, groups, nodes, ungroupedCount]);
 
   const showUngrouped = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -146,7 +139,7 @@ export default function GroupFilterPicker({ groups, nodes, colorBy, selected, on
         }}
       >
         <span className="flex min-w-0 items-center gap-2">
-          <GroupDot color={closed.tone?.background} muted={!closed.tone} />
+          <GroupDot color={closed.tone ?? undefined} muted={!closed.tone} />
           <span className="min-w-0">
             <span className={cx("block truncate text-[13px] font-semibold", selected.length ? "text-[var(--text)]" : "text-[var(--muted)]")}>
               {closed.title}
@@ -218,7 +211,7 @@ export default function GroupFilterPicker({ groups, nodes, colorBy, selected, on
               ) : null}
               {matches.map((group) => {
                 const members = nodes.filter((n) => n.groupId === group.id);
-                const tone = chipTone(groupStatusColor(members, colorBy));
+                const tone = groupPaintColor(group);
                 const active = selected.includes(group.id);
                 return (
                   <li key={group.id}>
@@ -232,7 +225,7 @@ export default function GroupFilterPicker({ groups, nodes, colorBy, selected, on
                       )}
                       onClick={() => toggle(group.id)}
                     >
-                      <GroupDot color={tone.background} />
+                      <GroupDot color={tone} />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-xs font-semibold text-[var(--text)]">{groupTitle(group.title)}</span>
                         <span className="block truncate text-[10px] text-[var(--muted)]">

@@ -1,26 +1,70 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { groupStatusColor, groupTitle } from "../graph/groups";
-import { STATUS_COLORS, WORKFLOW_STATUS_META } from "../graph/workflowStatus";
+import { groupPaintColor, groupTitle } from "../graph/groups";
 import { placePortaledMenu, portaledMenuListClass, portaledMenuShellClass, type PortaledMenuPos } from "../lib/dropdownPortal";
 import { handleOverlayWheel } from "../lib/overlayScroll";
 import { cx, field, primaryBtn } from "../styles";
-import type { ColorBy, GraphGroup, GraphNode } from "../types";
+import type { GraphGroup, GraphNode } from "../types";
+import HexColorField from "./HexColorField";
+import type { GroupEditPatch } from "./GroupManager";
 
 type Props = {
   groupId: string | null;
   groups: GraphGroup[];
   nodes: GraphNode[];
-  colorBy: ColorBy;
   mixed?: boolean;
   emptyLabel?: string;
   onChange: (groupId: string | null) => void;
   onCreate: (title: string) => void;
+  onUpdateGroup?: (groupId: string, patch: GroupEditPatch) => void;
 };
 
-function chipTone(color: string) {
-  const meta = WORKFLOW_STATUS_META.find((item) => STATUS_COLORS[item.id] === color);
-  return { background: meta?.pillBg ?? color, color: meta?.pillText ?? "#1f2937" };
+function CurrentGroupEditor({
+  group,
+  onUpdateGroup,
+}: {
+  group: GraphGroup;
+  onUpdateGroup: (groupId: string, patch: GroupEditPatch) => void;
+}) {
+  const title = groupTitle(group.title);
+  const [name, setName] = useState(title);
+
+  useEffect(() => {
+    setName(title);
+  }, [title]);
+
+  function commitName() {
+    const next = groupTitle(name);
+    setName(next);
+    if (next !== title) onUpdateGroup(group.id, { title: next });
+  }
+
+  return (
+    <div className="mt-1.5 space-y-1.5">
+      <input
+        className={cx(field, "py-[5px] text-xs font-semibold")}
+        value={name}
+        aria-label="Group name"
+        onChange={(e) => setName(e.target.value)}
+        onBlur={commitName}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            (e.currentTarget as HTMLInputElement).blur();
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            setName(title);
+          }
+        }}
+      />
+      <HexColorField
+        value={groupPaintColor(group)}
+        ariaLabel={`Color for ${title}`}
+        onChange={(color) => onUpdateGroup(group.id, { color })}
+      />
+    </div>
+  );
 }
 
 function GroupDot({ color, muted }: { color?: string; muted?: boolean }) {
@@ -37,15 +81,15 @@ export default function GroupPicker({
   groupId,
   groups,
   nodes,
-  colorBy,
   mixed = false,
   emptyLabel = "None",
   onChange,
   onCreate,
+  onUpdateGroup,
 }: Props) {
   const current = !mixed ? groups.find((group) => group.id === groupId) ?? null : null;
   const currentMembers = current ? nodes.filter((n) => n.groupId === current.id) : [];
-  const currentTone = current ? chipTone(groupStatusColor(currentMembers, colorBy)) : null;
+  const currentColor = current ? groupPaintColor(current) : undefined;
   const closedTitle = mixed ? emptyLabel : current ? groupTitle(current.title) : "None";
   const closedHint = mixed
     ? "Groups differ"
@@ -142,7 +186,7 @@ export default function GroupPicker({
         }}
       >
         <span className="flex min-w-0 items-center gap-2">
-          <GroupDot color={currentTone?.background} muted={!current} />
+          <GroupDot color={currentColor} muted={!current} />
           <span className="min-w-0">
             <span className={cx("block truncate text-[13px] font-semibold", current ? "text-[var(--text)]" : "text-[var(--muted)]")}>
               {closedTitle}
@@ -203,7 +247,7 @@ export default function GroupPicker({
               </li>
               {matches.map((group) => {
                 const members = nodes.filter((n) => n.groupId === group.id);
-                const tone = chipTone(groupStatusColor(members, colorBy));
+                const tone = groupPaintColor(group);
                 const active = group.id === groupId;
                 return (
                   <li key={group.id}>
@@ -217,7 +261,7 @@ export default function GroupPicker({
                       )}
                       onClick={() => assign(group.id)}
                     >
-                      <GroupDot color={tone.background} />
+                      <GroupDot color={tone} />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-xs font-semibold text-[var(--text)]">{groupTitle(group.title)}</span>
                         <span className="block truncate text-[10px] text-[var(--muted)]">
@@ -254,6 +298,9 @@ export default function GroupPicker({
           </div>,
           document.body,
         ) : null}
+      {current && onUpdateGroup ? (
+        <CurrentGroupEditor group={current} onUpdateGroup={onUpdateGroup} />
+      ) : null}
     </div>
   );
 }
