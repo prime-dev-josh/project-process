@@ -310,27 +310,87 @@ function distToSeg(px: number, py: number, x1: number, y1: number, x2: number, y
   return Math.hypot(px - (x1 + dx * t), py - (y1 + dy * t));
 }
 
-function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, maxLines: number) {
+const LABEL_FONT = '"Segoe UI", sans-serif';
+
+/** Split long tokens so every word fits after font shrink hits the floor. */
+function tokenizeForWrap(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, breakLongWords: boolean) {
   const words = text.split(/\s+/).filter(Boolean);
+  if (!breakLongWords) return words;
+  const tokens: string[] = [];
+  for (const word of words) {
+    if (ctx.measureText(word).width <= maxWidth) {
+      tokens.push(word);
+      continue;
+    }
+    let chunk = "";
+    for (const ch of word) {
+      const test = chunk + ch;
+      if (ctx.measureText(test).width > maxWidth && chunk) {
+        tokens.push(chunk);
+        chunk = ch;
+      } else {
+        chunk = test;
+      }
+    }
+    if (chunk) tokens.push(chunk);
+  }
+  return tokens;
+}
+
+/** Wrap all tokens into at most maxLines; return null if the text needs more lines at this font size. */
+function wrapAllWords(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  maxLines: number,
+  breakLongWords = false,
+): string[] | null {
+  const tokens = tokenizeForWrap(ctx, text, maxWidth, breakLongWords);
+  if (!tokens.length) return [""];
+
   const lines: string[] = [];
   let line = "";
-  for (const word of words) {
-    const test = line ? `${line} ${word}` : word;
+  for (const token of tokens) {
+    const test = line ? `${line} ${token}` : token;
     if (ctx.measureText(test).width > maxWidth && line) {
       lines.push(line);
-      line = word;
-      if (lines.length >= maxLines) break;
+      line = token;
+      if (lines.length >= maxLines) return null;
+    } else if (ctx.measureText(token).width > maxWidth) {
+      return null;
     } else {
       line = test;
     }
   }
-  if (line && lines.length < maxLines) lines.push(line);
-  if (words.length && lines.length === maxLines && ctx.measureText(line).width > maxWidth) {
-    let clipped = lines[maxLines - 1];
-    while (clipped.length && ctx.measureText(`${clipped}…`).width > maxWidth) clipped = clipped.slice(0, -1);
-    lines[maxLines - 1] = `${clipped}…`;
+  if (line) {
+    if (lines.length >= maxLines) return null;
+    lines.push(line);
+  }
+  for (const ln of lines) {
+    if (ctx.measureText(ln).width > maxWidth) return null;
   }
   return lines;
+}
+
+/** Shrink font until the full string fits in maxWidth × maxLines (no ellipsis or dropped words). */
+function fitWrappedText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  maxLines: number,
+  baseFontPx: number,
+  fontWeight: number | string = 600,
+) {
+  const minFontPx = 6;
+  for (let fontPx = baseFontPx; fontPx >= minFontPx; fontPx -= 0.5) {
+    ctx.font = `${fontWeight} ${fontPx}px ${LABEL_FONT}`;
+    const lines = wrapAllWords(ctx, text, maxWidth, maxLines, false);
+    if (lines) return { lines, fontPx };
+  }
+  const fontPx = minFontPx;
+  ctx.font = `${fontWeight} ${fontPx}px ${LABEL_FONT}`;
+  const lines = wrapAllWords(ctx, text, maxWidth, maxLines, true) ?? [text];
+  return { lines, fontPx };
 }
 
 function GraphCanvas({
@@ -867,30 +927,35 @@ function GraphCanvas({
         ctx.beginPath();
         ctx.rect(rx, ry, sw, sh);
         ctx.clip();
-        const titleSize = 12 * textScale;
+        const titlePad = sw - 16;
+        const titleFit = fitWrappedText(ctx, node.title, titlePad, 1, 12 * textScale, 600);
         ctx.fillStyle = palette.cardText;
-        ctx.font = `600 ${titleSize}px "Segoe UI", sans-serif`;
+        ctx.font = `600 ${titleFit.fontPx}px ${LABEL_FONT}`;
         ctx.textAlign = "left";
         ctx.textBaseline = "top";
-        ctx.fillText(wrapText(ctx, node.title, sw - 16, 1)[0] ?? node.title, rx + 8, ry + 8);
+        titleFit.lines.forEach((line, i) => {
+          ctx.fillText(line, rx + 8, ry + 8 + i * (titleFit.fontPx + 3));
+        });
         if (node.description) {
-          const bodySize = 10.5 * textScale;
+          const bodyFit = fitWrappedText(ctx, node.description, titlePad, 2, 10.5 * textScale, 400);
           ctx.fillStyle = palette.cardMuted;
-          ctx.font = `${bodySize}px "Segoe UI", sans-serif`;
-          wrapText(ctx, node.description, sw - 16, 2).forEach((line, i) => {
-            ctx.fillText(line, rx + 8, ry + 26 + i * (bodySize + 3));
+          ctx.font = `400 ${bodyFit.fontPx}px ${LABEL_FONT}`;
+          const bodyY = ry + 8 + titleFit.lines.length * (titleFit.fontPx + 3) + 4;
+          bodyFit.lines.forEach((line, i) => {
+            ctx.fillText(line, rx + 8, bodyY + i * (bodyFit.fontPx + 3));
           });
         }
       } else if (shouldLabel(node, globalScale, selected, hovered, Boolean(search && matched))) {
         ctx.globalAlpha = (dim ? 0.16 : 1) * (selected || hovered || node.level <= 1 ? 1 : smoothstep(0.28, 0.7, globalScale || 0.3));
-        const fontPx = 11 * textScale;
+        const weight = node.level === 0 ? 700 : 600;
+        const titleFit = fitWrappedText(ctx, node.title, 148 * textScale, 2, 11 * textScale, weight);
         const rScreen = r * globalScale;
-        ctx.font = `${node.level === 0 ? 700 : 600} ${fontPx}px "Segoe UI", sans-serif`;
+        ctx.font = `${weight} ${titleFit.fontPx}px ${LABEL_FONT}`;
         ctx.fillStyle = dim ? palette.labelDim : palette.label;
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
-        wrapText(ctx, node.title, 148 * textScale, 2).forEach((line, i) => {
-          ctx.fillText(line, p.x, p.y + rScreen + 4 + i * (fontPx + 2));
+        titleFit.lines.forEach((line, i) => {
+          ctx.fillText(line, p.x, p.y + rScreen + 4 + i * (titleFit.fontPx + 2));
         });
       }
       ctx.restore();
@@ -1760,20 +1825,22 @@ function GraphCanvas({
             ctx.beginPath();
             ctx.rect(rx, ry, sw, sh);
             ctx.clip();
-            const titleSize = 12 * textScale;
-            const bodySize = 10.5 * textScale;
+            const titlePad = sw - 16;
+            const titleFit = fitWrappedText(ctx, node.title, titlePad, 1, 12 * textScale, 600);
             ctx.fillStyle = palette.cardText;
-            ctx.font = `600 ${titleSize}px "Segoe UI", sans-serif`;
+            ctx.font = `600 ${titleFit.fontPx}px ${LABEL_FONT}`;
             ctx.textAlign = "left";
             ctx.textBaseline = "top";
-            const title = wrapText(ctx, node.title, sw - 16, 1)[0] ?? node.title;
-            ctx.fillText(title, rx + 8, ry + 8);
+            titleFit.lines.forEach((line, i) => {
+              ctx.fillText(line, rx + 8, ry + 8 + i * (titleFit.fontPx + 3));
+            });
             if (node.description) {
+              const bodyFit = fitWrappedText(ctx, node.description, titlePad, 2, 10.5 * textScale, 400);
               ctx.fillStyle = palette.cardMuted;
-              ctx.font = `${bodySize}px "Segoe UI", sans-serif`;
-              const lines = wrapText(ctx, node.description, sw - 16, 2);
-              lines.forEach((line, i) => {
-                ctx.fillText(line, rx + 8, ry + 26 + i * (bodySize + 3));
+              ctx.font = `400 ${bodyFit.fontPx}px ${LABEL_FONT}`;
+              const bodyY = ry + 8 + titleFit.lines.length * (titleFit.fontPx + 3) + 4;
+              bodyFit.lines.forEach((line, i) => {
+                ctx.fillText(line, rx + 8, bodyY + i * (bodyFit.fontPx + 3));
               });
             }
           }, unrotate);
@@ -1781,13 +1848,13 @@ function GraphCanvas({
           ctx.globalAlpha = alpha * smoothstep(0.28, 0.7, globalScale || 0.3);
           if (selected || hovered || node.level <= 1) ctx.globalAlpha = alpha;
           inScreenSpace(ctx, x, y, globalScale, (k) => {
-            const fontPx = 11 * textScale;
+            const weight = node.level === 0 ? 700 : 600;
             const rScreen = r * k;
-            ctx.font = `${node.level === 0 ? 700 : 600} ${fontPx}px "Segoe UI", sans-serif`;
-            ctx.fillStyle = dim ? palette.labelDim : palette.label;
             const outward = Math.hypot(x, y) > 80;
             const maxW = (outward ? 108 : 140) * textScale;
-            const lines = wrapText(ctx, node.title, maxW, 2);
+            const titleFit = fitWrappedText(ctx, node.title, maxW, 2, 11 * textScale, weight);
+            ctx.font = `${weight} ${titleFit.fontPx}px ${LABEL_FONT}`;
+            ctx.fillStyle = dim ? palette.labelDim : palette.label;
             if (outward) {
               const ang = Math.atan2(y, x);
               const lift = rScreen + 10;
@@ -1795,15 +1862,15 @@ function GraphCanvas({
               const ly = Math.sin(ang) * lift;
               ctx.textAlign = Math.abs(Math.cos(ang)) < 0.35 ? "center" : Math.cos(ang) > 0 ? "left" : "right";
               ctx.textBaseline = Math.sin(ang) > 0.35 ? "top" : Math.sin(ang) < -0.35 ? "bottom" : "middle";
-              lines.forEach((line, i) => {
-                const dy = (i - (lines.length - 1) / 2) * (fontPx + 2);
+              titleFit.lines.forEach((line, i) => {
+                const dy = (i - (titleFit.lines.length - 1) / 2) * (titleFit.fontPx + 2);
                 ctx.fillText(line, lx, ly + dy);
               });
             } else {
               ctx.textAlign = "center";
               ctx.textBaseline = "top";
-              lines.forEach((line, i) => {
-                ctx.fillText(line, 0, rScreen + 4 + i * (fontPx + 2));
+              titleFit.lines.forEach((line, i) => {
+                ctx.fillText(line, 0, rScreen + 4 + i * (titleFit.fontPx + 2));
               });
             }
           }, unrotate);
