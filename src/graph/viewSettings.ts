@@ -1,5 +1,9 @@
 import { DEFAULT_SETTINGS, graphSettingsSchema, type GraphSettings } from "../schema/graph";
 
+/** Floor for Fit and wheel zoom-out. The organic layout can span far past 0.12. */
+export const GRAPH_MIN_ZOOM = 0.02;
+export const GRAPH_MAX_ZOOM = 8;
+
 export const VIEW_SETTING_KEYS = [
   "physics",
   "charge",

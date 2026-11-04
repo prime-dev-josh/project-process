@@ -8,7 +8,7 @@ import {
 } from "../graph/workflowStatus";
 import { users } from "../data/users";
 import { FORCE_INTENSITY, FORCE_INTENSITY_IDS, nearestForceLevel } from "../graph/viewSettings";
-import { cx, field, sideH2 } from "../styles";
+import { cx, field, sideH2, toolBtnOn } from "../styles";
 import type { ColorBy, GraphGroup, GraphNode, GraphSettings } from "../types";
 import { isFiltered } from "../graph/visibility";
 import GroupFilterPicker from "./GroupFilterPicker";
@@ -257,7 +257,7 @@ export default function FilterPanel({
         <SegmentedControl
           options={[
             { id: "fit", label: "Fit", title: "Fit the graph in the window" },
-            { id: "reorg", label: "Reorg", title: "Apply force settings and let the map settle" },
+            { id: "reorg", label: "Reorg", title: "Untangle overlaps and stretch links without pulling the map into a ball" },
             { id: "physics", label: "Physics", title: "Let nodes move and settle" },
           ]}
           pressed={settings.physics ? (["physics"] as const) : []}
@@ -348,6 +348,14 @@ export default function FilterPanel({
               titles={["Least padding", "Balanced", "Most padding"]}
               onChange={(collide) => onSettings({ collide })}
             />
+            <button
+              type="button"
+              className={cx(toolBtnOn, "mt-2.5 w-full py-2 text-center")}
+              title="Untangle overlaps and stretch links (same as Reorg under Map)"
+              onClick={onReorg}
+            >
+              Apply layout
+            </button>
           </div>
         ) : null}
       </section>

@@ -20,7 +20,7 @@ import { nodeColor } from "./graph/colors";
 import type { WorkflowStatus } from "./graph/workflowStatus";
 import { UNGROUPED_FILTER, groupTitle, nextGroupColor, normalizeGroupColor, pruneEmptyGroups } from "./graph/groups";
 import { addChild, addLink, blankNode, deleteNode, insertNodeBetween } from "./graph/ops";
-import { mergeViewSettings } from "./graph/viewSettings";
+import { GRAPH_MAX_ZOOM, GRAPH_MIN_ZOOM, mergeViewSettings } from "./graph/viewSettings";
 import { degToRad, rotatePoint, viewCoverOffset } from "./graph/viewRotation";
 import { directedFlowFrom } from "./graph/flow";
 import { isFiltered, linkEnds } from "./graph/visibility";
@@ -104,6 +104,8 @@ export default function App() {
   const persistTimer = useRef<number | null>(null);
   const persistedPositions = useRef(new Map<string, { x: number; y: number }>());
   const persistLayoutAfterReorg = useRef(false);
+  const [mapRevealing, setMapRevealing] = useState(true);
+  const mapLoading = mapRevealing;
   const saveViewTimer = useRef(0);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -176,11 +178,11 @@ export default function App() {
   }, [settings]);
 
   useEffect(() => {
-    fittedOnce.current = false;
+    if (!mapRevealing) fittedOnce.current = false;
     persistedPositions.current = new Map(
       graphStore.state.nodes.flatMap((n) => (n.x != null && n.y != null ? [[n.id, { x: n.x, y: n.y }] as const] : [])),
     );
-  }, [hydration]);
+  }, [hydration, mapRevealing]);
 
   useEffect(() => {
     const el = stageRef.current;
@@ -448,6 +450,7 @@ export default function App() {
   }
 
   function openNodeEditor(id: string) {
+    if (mapLoading) return;
     setSelectedIds([id]);
     setPicked({ kind: "node", id });
     setEditingId(id);
@@ -537,7 +540,10 @@ export default function App() {
     const id = newId();
     const set = new Set(ids);
     const nextNodes = graphStore.state.nodes.map((n) => (set.has(n.id) ? { ...n, groupId: id } : n));
-    const nextGroups: GraphGroup[] = [...graphStore.state.groups, { id, title: groupTitle(title), color: nextGroupColor(graphStore.state.groups) }];
+    const nextGroups: GraphGroup[] = [
+      ...graphStore.state.groups,
+      { id, title: groupTitle(title), color: nextGroupColor(graphStore.state.groups) },
+    ];
     commitGraph(`Grouped ${ids.length} nodes`, {
       nodes: nextNodes,
       groups: pruneEmptyGroups(nextNodes, nextGroups),
@@ -550,13 +556,7 @@ export default function App() {
     const title = patch.title !== undefined ? groupTitle(patch.title) : current.title;
     const color = patch.color !== undefined ? normalizeGroupColor(patch.color) ?? current.color : current.color;
     if (title === current.title && (color ?? "") === (current.color ?? "")) return;
-    const renamed = title !== current.title;
-    const recoloured = (color ?? "") !== (current.color ?? "");
-    const label = renamed && recoloured
-      ? `Updated ${title}`
-      : renamed
-        ? `Renamed group to ${title}`
-        : `Changed color of ${title}`;
+    const label = patch.color !== undefined && (color ?? "") !== (current.color ?? "") ? "Changed group color" : "Renamed group";
     commitGraph(label, {
       groups: graphStore.state.groups.map((group) => (group.id === groupId ? { ...group, title, color } : group)),
     });
@@ -610,7 +610,7 @@ export default function App() {
   }
 
   function pickNode(id: string, additive = false) {
-    if (editLocked) return;
+    if (mapLoading || editLocked) return;
     const leavesEditor = additive || (editingId !== null && editingId !== id);
     const apply = () => {
       setSelectedIds((prev) => {
@@ -634,7 +634,7 @@ export default function App() {
   }
 
   function pickLink(id: string) {
-    if (editLocked) return;
+    if (mapLoading || editLocked) return;
     guardDraft(() => {
       setSelectedIds([]);
       setPicked({ kind: "link", id });
@@ -719,14 +719,14 @@ export default function App() {
       minY = Math.min(minY, n.y!);
       maxY = Math.max(maxY, n.y!);
     }
-    const pad = 72;
+    const pad = 180;
     const bboxW = Math.max(maxX - minX, 48);
     const bboxH = Math.max(maxY - minY, 48);
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
     const fitZoom = Math.max(
-      0.12,
-      Math.min((size.w - pad * 2) / bboxW, (size.h - pad * 2) / bboxH, 8),
+      GRAPH_MIN_ZOOM,
+      Math.min((size.w - pad * 2) / bboxW, (size.h - pad * 2) / bboxH, GRAPH_MAX_ZOOM),
     );
     return { cx, cy, fitZoom };
   }, [nodes, size.w, size.h, hideFiltered, search, settings.colorBy, statusFilters, employeeFilter, groupFilters]);
@@ -777,20 +777,20 @@ export default function App() {
   const ensureFilteredVisibleRef = useRef(ensureFilteredVisible);
   ensureFilteredVisibleRef.current = ensureFilteredVisible;
   useEffect(() => {
-    if (!fittedOnce.current) return;
+    if (!fittedOnce.current || mapRevealing) return;
     const timer = window.setTimeout(() => ensureFilteredVisibleRef.current(), 40);
     return () => window.clearTimeout(timer);
-  }, [filterViewKey]);
+  }, [filterViewKey, mapRevealing]);
 
   useEffect(() => {
-    if (!nodes.length || size.w < 200) return;
+    if (mapLoading || !nodes.length || size.w < 200) return;
     if (fittedOnce.current) return;
     const timer = window.setTimeout(() => {
       fitGraph();
       fittedOnce.current = true;
-    }, 120);
+    }, 180);
     return () => window.clearTimeout(timer);
-  }, [nodes.length, size.w, size.h, fitGraph, hydration]);
+  }, [mapLoading, nodes.length, size.w, size.h, fitGraph]);
 
   function reheat() {
     persistLayoutAfterReorg.current = true;
@@ -799,7 +799,10 @@ export default function App() {
       settingsRef.current = next;
       return next;
     });
-    window.setTimeout(() => graphRef.current?.applyViewForces?.({ rebuildStructure: true, reheat: true, reorg: true }), 20);
+    window.setTimeout(
+      () => graphRef.current?.applyViewForces?.({ rebuildStructure: true, reheat: true, detangle: true }),
+      20,
+    );
   }
 
   function screenOf(x: number, y: number) {
@@ -915,6 +918,8 @@ export default function App() {
 
       <div className="flex min-h-0 min-w-0 flex-1">
         <div className="flex h-full shrink-0">
+          {!mapLoading ? (
+          <>
           <aside className="site-left-rail flex h-full w-[280px] shrink-0 flex-col border-r border-[var(--line)] bg-[var(--card)]">
             <LeftSidePanel
               search={search}
@@ -974,6 +979,8 @@ export default function App() {
               onLink={(arrows) => startLink(arrows)}
             />
           </div>
+          </>
+          ) : null}
         </div>
 
         <div className="stage relative min-h-0 min-w-0 flex-1 overflow-hidden bg-[var(--graph-bg)]" ref={stageRef}>
@@ -1086,6 +1093,7 @@ export default function App() {
               showToast("Linked");
             }}
             onZoom={setZoom}
+            onRevealActive={setMapRevealing}
             onSettle={() => {
               const moved = liveGraphNodes().flatMap((n) => {
                 if (n.x == null || n.y == null) return [];
@@ -1099,7 +1107,7 @@ export default function App() {
               } else {
                 persistLayoutAfterReorg.current = false;
               }
-              if (!fittedOnce.current) {
+              if (!mapRevealing && !fittedOnce.current) {
                 fittedOnce.current = true;
                 fitGraph();
               }
@@ -1107,7 +1115,9 @@ export default function App() {
           />
         </div>
 
-        <ViewCompass degrees={viewRotation} onChange={setViewRotation} onHoldChange={setViewSpinning} />
+        {!mapLoading ? (
+          <ViewCompass degrees={viewRotation} onChange={setViewRotation} onHoldChange={setViewSpinning} />
+        ) : null}
 
         {(placing || connect || highlightOriginId || selectedIds.length > 1) && (
           <div className="absolute top-3 left-1/2 z-[8] -translate-x-1/2 rounded-full bg-[rgba(27,58,107,0.92)] px-3 py-1.5 text-xs font-bold tracking-wide text-[#f3f2f1]">
