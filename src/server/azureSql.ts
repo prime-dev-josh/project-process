@@ -25,7 +25,9 @@ function inAzure() {
 }
 
 async function accessToken() {
-  const cred = inAzure() ? new ManagedIdentityCredential() : new DefaultAzureCredential();
+  const cred = inAzure()
+    ? new ManagedIdentityCredential({ clientId: process.env.AZURE_CLIENT_ID })
+    : new DefaultAzureCredential();
   const token = await cred.getToken(TOKEN_SCOPE);
   if (!token?.token) throw new Error("No Azure SQL access token");
   return token;

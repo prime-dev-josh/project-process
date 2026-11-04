@@ -18,7 +18,9 @@ function inAzure() {
 
 async function identityGraphToken() {
   if (identityToken && identityToken.expires - Date.now() > 60_000) return identityToken.token;
-  const cred = inAzure() ? new ManagedIdentityCredential() : new DefaultAzureCredential();
+  const cred = inAzure()
+    ? new ManagedIdentityCredential({ clientId: process.env.AZURE_CLIENT_ID })
+    : new DefaultAzureCredential();
   const next = await cred.getToken(GRAPH_SCOPE);
   if (!next?.token) return null;
   identityToken = { token: next.token, expires: next.expiresOnTimestamp };
