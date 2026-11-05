@@ -30,6 +30,7 @@ import {
   pulseStroke,
 } from "../graph/pulse";
 import { detangleLayout } from "../graph/detangle";
+import { buildUndirectedAdjacency, nodesWithinHops } from "../graph/elasticDrag";
 import { GRAPH_MAX_ZOOM, GRAPH_MIN_ZOOM } from "../graph/viewSettings";
 import { placeRevealedNode, revealedNeighbor, revealOrder, topologyKey } from "../graph/stagedReveal";
 import { isFiltered, linkEnds } from "../graph/visibility";
@@ -76,6 +77,8 @@ type Props = {
   onGroupMoveEnd: (positions: { id: string; x: number; y: number }[]) => void;
   onSelectLink: (id: string) => void;
   onHover: (id: string | null) => void;
+  /** Fired when the pointer enters or leaves a group name pill on the map. */
+  onGroupLabelHover?: (over: boolean) => void;
   onEditLink: (id: string) => void;
   onNodeMenu: (id: string, x: number, y: number) => void;
   onLinkMenu: (id: string, x: number, y: number) => void;
@@ -431,6 +434,7 @@ function GraphCanvas({
   onGroupMoveEnd,
   onSelectLink,
   onHover,
+  onGroupLabelHover,
   onEditLink,
   onNodeMenu,
   onLinkMenu,
@@ -504,6 +508,9 @@ function GraphCanvas({
   const groupLabelOffsetRef = useRef(new Map<string, { dx: number; dy: number }>());
   const groupLabelPinnedRef = useRef(new Set<string>());
   const groupLabelHitRef = useRef<ScreenRect[]>([]);
+  /** True while the pointer is over a group name pill (blocks node hover cards). */
+  const suppressNodeHoverRef = useRef(false);
+  const groupLabelPointerRef = useRef(false);
   const [gesture, setGesture] = useState<"marquee" | "group" | "pan" | "drag" | null>(null);
   const [dragLivePreview, setDragLivePreview] = useState(false);
   const [overBadge, setOverBadge] = useState(false);
@@ -795,6 +802,10 @@ function GraphCanvas({
   const hullCacheRef = useRef(new Map<string, { sig: string; hulls: Point[][]; cheap: boolean }>());
   const hullFrameRef = useRef(0);
   const liveFrameRef = useRef<{ nodes: GraphNode[]; byId: Map<string, GraphNode> } | null>(null);
+  const DRAG_LINK_STRENGTH = 0.94;
+  const REST_LINK_STRENGTH = 0.28;
+  const ELASTIC_HOPS_PHYSICS = 5;
+  const ELASTIC_HOPS_NO_PHYSICS = 512;
   nodesRef.current = nodes;
   linksRef.current = links;
   groupsRef.current = groups;
@@ -1284,17 +1295,60 @@ function GraphCanvas({
     }
   }
 
-  function moveSelected(dx: number, dy: number) {
+  function restoreDragLinkForces() {
+    const linkForce = graphRef.current?.d3Force("link") as { strength?: (n: number) => void } | undefined;
+    linkForce?.strength?.(REST_LINK_STRENGTH);
+  }
+
+  function applyElasticDragDelta(pinnedIds: Set<string>, dx: number, dy: number) {
     if (!dx && !dy) return;
+    const physics = settingsRef.current.physics;
+    const adj = buildUndirectedAdjacency(linksRef.current, (source, target) => {
+      return isShown(nodeById.get(source)) && isShown(nodeById.get(target));
+    });
+    const hopLimit = physics ? ELASTIC_HOPS_PHYSICS : ELASTIC_HOPS_NO_PHYSICS;
+    const followers = nodesWithinHops(pinnedIds, adj, hopLimit);
+
     for (const n of liveEngineNodes()) {
-      if (!selectedSet.has(n.id)) continue;
+      const pin = pinnedIds.has(n.id);
+      const follow = followers.has(n.id);
+      if (!pin && !follow) continue;
       n.x = (n.x ?? 0) + dx;
       n.y = (n.y ?? 0) + dy;
-      n.fx = n.x;
-      n.fy = n.y;
-      n.vx = 0;
-      n.vy = 0;
+      if (pin) {
+        n.fx = n.x;
+        n.fy = n.y;
+        n.vx = 0;
+        n.vy = 0;
+      } else {
+        n.fx = undefined;
+        n.fy = undefined;
+      }
     }
+
+    if (physics) {
+      const fg = graphRef.current;
+      const linkForce = fg?.d3Force("link") as { strength?: (n: number) => void } | undefined;
+      linkForce?.strength?.(DRAG_LINK_STRENGTH);
+      fg?.d3ReheatSimulation?.();
+      const fgAlpha = fg as { d3Alpha?: (a?: number) => number | undefined };
+      const cur = fgAlpha.d3Alpha?.();
+      fgAlpha.d3Alpha?.(Math.max(0.42, typeof cur === "number" ? cur : 0));
+    }
+  }
+
+  function elasticDragSaveIds(pinnedIds: Set<string>) {
+    const physics = settingsRef.current.physics;
+    const adj = buildUndirectedAdjacency(linksRef.current, (source, target) => {
+      return isShown(nodeById.get(source)) && isShown(nodeById.get(target));
+    });
+    const hopLimit = physics ? ELASTIC_HOPS_PHYSICS : ELASTIC_HOPS_NO_PHYSICS;
+    const followers = nodesWithinHops(pinnedIds, adj, hopLimit);
+    return new Set([...pinnedIds, ...followers]);
+  }
+
+  function moveSelected(dx: number, dy: number) {
+    applyElasticDragDelta(selectedSet, dx, dy);
   }
 
   function moveGroupMembers(ids: Set<string>, dx: number, dy: number) {
@@ -1536,11 +1590,17 @@ function GraphCanvas({
         if (initRevealRef.current) return;
         cursorGraph.current = graphAtClient(e.clientX, e.clientY);
         if (!interaction.current) {
+          const overGroupLabel = Boolean(groupLabelAt(e.clientX, e.clientY));
+          suppressNodeHoverRef.current = overGroupLabel;
+          if (overGroupLabel !== groupLabelPointerRef.current) {
+            groupLabelPointerRef.current = overGroupLabel;
+            onGroupLabelHover?.(overGroupLabel);
+          }
           const badge = deselectBadgeAt(e.clientX, e.clientY);
           setOverBadge(badge != null);
-          onHover(badge ?? nodeAt(e.clientX, e.clientY, 12)?.id ?? null);
+          onHover(overGroupLabel ? null : badge ?? nodeAt(e.clientX, e.clientY, 12)?.id ?? null);
           const host = hostRef.current;
-          if (host) host.style.cursor = groupLabelAt(e.clientX, e.clientY) ? "grab" : "";
+          if (host) host.style.cursor = overGroupLabel ? "grab" : "";
         }
         const it = interaction.current;
         if (!it) return;
@@ -1586,15 +1646,7 @@ function GraphCanvas({
           const idSet = new Set(it.ids);
           const dx = g.x - it.lastX;
           const dy = g.y - it.lastY;
-          for (const n of liveEngineNodes()) {
-            if (!idSet.has(n.id)) continue;
-            n.x = (n.x ?? 0) + dx;
-            n.y = (n.y ?? 0) + dy;
-            n.fx = n.x;
-            n.fy = n.y;
-            n.vx = 0;
-            n.vy = 0;
-          }
+          applyElasticDragDelta(idSet, dx, dy);
           it.lastX = g.x;
           it.lastY = g.y;
           hullCacheRef.current.clear();
@@ -1644,15 +1696,25 @@ function GraphCanvas({
           onMarquee(nodesInLasso(it.points).map((n) => n.id), it.mode);
         } else if (it.type === "group") {
           releaseHeld(selectedSet);
-          onGroupMoveEnd(selectedPositions());
+          restoreDragLinkForces();
+          const saveIds = elasticDragSaveIds(selectedSet);
+          onGroupMoveEnd(
+            liveEngineNodes()
+              .filter((n) => saveIds.has(n.id) && n.x != null && n.y != null)
+              .map((n) => ({ id: n.id, x: n.x as number, y: n.y as number })),
+          );
         } else if (it.type === "drag" && it.moved) {
           const idSet = new Set(it.ids);
           releaseHeld(idSet);
+          restoreDragLinkForces();
+          const saveIds = elasticDragSaveIds(idSet);
           onGroupMoveEnd(
             liveEngineNodes()
-              .filter((n) => idSet.has(n.id) && n.x != null && n.y != null)
+              .filter((n) => saveIds.has(n.id) && n.x != null && n.y != null)
               .map((n) => ({ id: n.id, x: n.x as number, y: n.y as number })),
           );
+        } else if (it.type === "drag") {
+          restoreDragLinkForces();
         } else if (it.type === "groupLabel") {
           const idSet = new Set(it.memberIds);
           releaseHeld(idSet);
@@ -1666,6 +1728,11 @@ function GraphCanvas({
         }
       }}
       onPointerLeave={() => {
+        suppressNodeHoverRef.current = false;
+        if (groupLabelPointerRef.current) {
+          groupLabelPointerRef.current = false;
+          onGroupLabelHover?.(false);
+        }
         if (!interaction.current) {
           cursorGraph.current = null;
           onHover(null);
@@ -1724,21 +1791,18 @@ function GraphCanvas({
           onHover(null);
           return;
         }
+        if (suppressNodeHoverRef.current) {
+          onHover(null);
+          return;
+        }
         onHover(n?.id ?? null);
       }}
       onNodeDrag={(n, translate) => {
         if (!selectedSet.has(n.id) || selectedSet.size < 2) return;
-        for (const node of liveEngineNodes()) {
-          if (node.id === n.id || !selectedSet.has(node.id)) continue;
-          node.x = (node.x ?? 0) + translate.x;
-          node.y = (node.y ?? 0) + translate.y;
-          node.fx = node.x;
-          node.fy = node.y;
-          node.vx = 0;
-          node.vy = 0;
-        }
+        applyElasticDragDelta(selectedSet, translate.x, translate.y);
       }}
       onNodeDragEnd={(n) => {
+        restoreDragLinkForces();
         if (selectedSet.has(n.id) && selectedSet.size > 1) {
           releaseHeld(selectedSet);
           onGroupMoveEnd(selectedPositions());

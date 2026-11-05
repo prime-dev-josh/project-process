@@ -113,6 +113,7 @@ export default function App() {
   const editSaveRef = useRef<(() => void) | null>(null);
   const [editLocked, setEditLocked] = useState(false);
   const [previewAnchorId, setPreviewAnchorId] = useState<string | null>(null);
+  const [groupLabelHover, setGroupLabelHover] = useState(false);
   const previewOverRef = useRef(false);
   const [pendingEdit, setPendingEdit] = useState<PendingEdit | null>(null);
   const [editVisual, setEditVisual] = useState<NodeEditPreview | null>(null);
@@ -140,6 +141,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (groupLabelHover) {
+      setPreviewAnchorId(null);
+      return;
+    }
     if (hoveredId) {
       setPreviewAnchorId(hoveredId);
       return;
@@ -147,10 +152,12 @@ export default function App() {
     if (previewOverRef.current) return;
     const timer = window.setTimeout(() => setPreviewAnchorId(null), 120);
     return () => window.clearTimeout(timer);
-  }, [hoveredId]);
+  }, [hoveredId, groupLabelHover]);
 
   const previewTargetId =
-    !editingLink && !menu && !placing && !connect && !editLocked ? (hoveredId ?? previewAnchorId) : null;
+    !groupLabelHover && !editingLink && !menu && !placing && !connect && !editLocked
+      ? (hoveredId ?? previewAnchorId)
+      : null;
   const preview = previewTargetId ? nodeById.get(previewTargetId) ?? null : null;
   const graphNodes = useMemo(() => {
     if (!editVisual || !editingId) return nodes;
@@ -1046,6 +1053,7 @@ export default function App() {
             onGroupMoveEnd={(positions) => savePositions(positions, `Moved ${positions.length} nodes`)}
             onSelectLink={pickLink}
             onHover={setHoveredId}
+            onGroupLabelHover={setGroupLabelHover}
             onEditLink={(id) => requestLinkEdit(id)}
             onNodeMenu={(id, x, y) => {
               if (editLocked) return;
