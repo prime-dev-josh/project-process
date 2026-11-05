@@ -60,15 +60,28 @@ export default function LeftSidePanel({
 }: Props) {
   const accent = editingNode ? nodeColor(editingNode, colorBy) : undefined;
 
+  const viewReplacement = editingNode ? (
+    <div
+      className={cx("left-panel-edit is-tinted flex min-h-0 flex-1 flex-col overflow-hidden")}
+      style={accent ? ({ ["--edit-accent" as string]: accent } as CSSProperties) : undefined}
+    >
+      <EditNodePanel
+        key={editingNode.id}
+        embedded
+        node={editingNode}
+        nodes={nodes}
+        groups={groups}
+        colorBy={colorBy}
+        onSave={onNodeSave}
+        onCreateGroup={onCreateGroup}
+        onUpdateGroup={onUpdateGroup}
+      />
+    </div>
+  ) : undefined;
+
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--card)]">
-      <div
-        className={cx(
-          "left-panel-top overflow-hidden p-2",
-          editingNode ? "shrink-0" : "min-h-0 flex-1",
-        )}
-        onWheel={handleOverlayWheel}
-      >
+      <div className="left-panel-top flex min-h-0 flex-1 flex-col overflow-hidden" onWheel={handleOverlayWheel}>
         <FilterPanel
           nodes={nodes}
           colorBy={colorBy}
@@ -91,30 +104,9 @@ export default function LeftSidePanel({
           onToggleCards={onToggleCards}
           selectedNodeId={editingNode?.id ?? null}
           onUpdateGroup={onUpdateGroup}
+          viewReplacement={viewReplacement}
         />
       </div>
-      {editingNode ? (
-        <div
-          className={cx(
-            "left-panel-bottom flex min-h-0 flex-1 flex-col overflow-hidden border-t border-[var(--line)] bg-[var(--card)]",
-            "is-tinted",
-          )}
-          style={accent ? ({ ["--edit-accent" as string]: accent } as CSSProperties) : undefined}
-          onWheel={handleOverlayWheel}
-        >
-          <EditNodePanel
-            key={editingNode.id}
-            embedded
-            node={editingNode}
-            nodes={nodes}
-            groups={groups}
-            colorBy={colorBy}
-            onSave={onNodeSave}
-            onCreateGroup={onCreateGroup}
-            onUpdateGroup={onUpdateGroup}
-          />
-        </div>
-      ) : null}
     </div>
   );
 }

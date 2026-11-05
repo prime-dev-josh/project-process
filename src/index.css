@@ -121,11 +121,13 @@ html[data-theme="dark"] .edit-float.is-tinted {
   background: color-mix(in srgb, var(--edit-accent) 28%, #2a2a2a);
 }
 
-.left-panel-bottom.is-tinted {
+.left-panel-bottom.is-tinted,
+.left-panel-edit.is-tinted {
   border-top-color: var(--edit-accent);
   background: color-mix(in srgb, var(--edit-accent) 22%, var(--card));
 }
-html[data-theme="dark"] .left-panel-bottom.is-tinted {
+html[data-theme="dark"] .left-panel-bottom.is-tinted,
+html[data-theme="dark"] .left-panel-edit.is-tinted {
   background: color-mix(in srgb, var(--edit-accent) 28%, var(--card));
 }
 

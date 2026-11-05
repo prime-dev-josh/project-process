@@ -17,15 +17,14 @@ export const VIEW_SETTING_KEYS = [
   "cardScale",
 ] as const;
 
-/** Three discrete intensities per force — click once, no slider ticks. */
-export const FORCE_INTENSITY = {
-  charge: [-50, -100, -200],
-  linkDistance: [0, 50, 100],
-  collide: [0, 5, 10],
-} as const;
+/** Five discrete force steps (Advanced sliders); wider range than the old 1–3 buttons. */
+export const FORCE_LEVELS = 5;
 
-export const FORCE_INTENSITY_IDS = ["1", "2", "3"] as const;
-export type ForceIntensityId = (typeof FORCE_INTENSITY_IDS)[number];
+export const FORCE_INTENSITY = {
+  charge: [-35, -90, -150, -230, -320],
+  linkDistance: [0, 45, 90, 140, 200],
+  collide: [0, 6, 12, 20, 30],
+} as const;
 
 export function nearestForceLevel(values: readonly number[], value: number): number {
   let best = 0;
@@ -41,7 +40,8 @@ export function nearestForceLevel(values: readonly number[], value: number): num
 }
 
 export function snapForceValue(values: readonly number[], value: number) {
-  return values[nearestForceLevel(values, value)] ?? values[1];
+  const mid = Math.floor(values.length / 2);
+  return values[nearestForceLevel(values, value)] ?? values[mid];
 }
 
 export type ViewSettingKey = (typeof VIEW_SETTING_KEYS)[number];

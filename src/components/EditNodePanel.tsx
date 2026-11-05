@@ -71,7 +71,7 @@ export default function EditNodePanel({ node, nodes, groups, colorBy, embedded =
     <div
       className={
         embedded
-          ? "min-h-0 flex-1 overflow-hidden p-3"
+          ? "min-h-0 flex-1 overflow-y-auto overscroll-contain p-3"
           : `${editFloat} is-tinted left-3 bottom-3 max-h-[calc(100vh-76px)] overflow-auto`
       }
       style={embedded ? style : { ...style, ["--edit-accent" as string]: accent }}

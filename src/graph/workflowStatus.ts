@@ -109,3 +109,9 @@ export function personAssignmentStats(nodes: GraphNode[], colorBy: ColorBy, emai
   const done = assigned.filter((n) => nodeWorkflowStatus(n, colorBy) === "done").length;
   return { total: assigned.length, done, pct: statusPercent(done, assigned.length) };
 }
+
+export function groupCompletionStats(nodes: GraphNode[], colorBy: ColorBy, groupId: string) {
+  const members = chapterNodes(nodes).filter((n) => n.groupId === groupId);
+  const done = members.filter((n) => nodeWorkflowStatus(n, colorBy) === "done").length;
+  return { total: members.length, done, pct: statusPercent(done, members.length) };
+}

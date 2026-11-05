@@ -78,9 +78,9 @@ export const graphSettingsSchema = z
   })
   .transform((raw) => ({
     physics: raw.physics,
-    charge: Math.min(-50, Math.max(-200, raw.charge)),
-    linkDistance: Math.min(100, Math.max(0, raw.linkDistance)),
-    collide: Math.min(10, Math.max(0, raw.collide)),
+    charge: Math.min(-35, Math.max(-320, raw.charge)),
+    linkDistance: Math.min(200, Math.max(0, raw.linkDistance)),
+    collide: Math.min(30, Math.max(0, raw.collide)),
     radial: true,
     colorBy: raw.colorBy,
     cardInfo: typeof raw.cardInfo === "boolean" ? raw.cardInfo : raw.nodeView === "cards",

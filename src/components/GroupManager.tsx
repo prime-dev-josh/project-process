@@ -13,7 +13,7 @@ type Props = {
   onUpdateGroup: (groupId: string, patch: GroupEditPatch) => void;
 };
 
-function GroupEditRow({
+export function GroupEditFields({
   group,
   memberCount,
   onUpdateGroup,
@@ -36,7 +36,7 @@ function GroupEditRow({
   }
 
   return (
-    <li className="shrink-0 rounded-lg border border-[var(--line)] bg-[var(--input)]/40 p-1">
+    <div className="shrink-0 rounded-lg border border-[var(--line)] bg-[var(--input)]/40 p-1">
       <div className="mb-1 flex items-center gap-1.5">
         <input
           className={cx(field, "min-w-0 flex-1 py-[5px] text-xs font-semibold")}
@@ -67,6 +67,18 @@ function GroupEditRow({
         ariaLabel={`Color for ${title}`}
         onChange={(color) => onUpdateGroup(group.id, { color })}
       />
+    </div>
+  );
+}
+
+function GroupEditRow(props: {
+  group: GraphGroup;
+  memberCount: number;
+  onUpdateGroup: (groupId: string, patch: GroupEditPatch) => void;
+}) {
+  return (
+    <li className="list-none">
+      <GroupEditFields {...props} />
     </li>
   );
 }

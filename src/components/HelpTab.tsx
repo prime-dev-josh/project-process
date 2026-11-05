@@ -220,7 +220,7 @@ export default function HelpTab() {
           <Card icon={<IcoEdit />} title="Edit a node" body="Click a ball — the left panel opens. Status, person, group, and size save instantly; Title and Description save with Enter / Ctrl+Enter or the check button." />
           <Card icon={<IcoAdd />} title="Child nodes" body="Adding from a node's menu links the new node with a one-way arrow from the original and copies that node's group and assignee." />
           <Card icon={<IcoLink />} title="Edit a link" body="Right-click a connection to flip, change arrows, insert, or delete." />
-          <Card icon={<IcoSelect />} title="Name a group" body="Lasso or Shift-click two or more nodes, then use the popup dropdown to assign an existing group, create a new one, or set None. Modify Node uses the same control for a single node. Each group keeps a hex color — set it under Manage groups in the filter panel, or in the group picker. A colored membrane wraps the members, with the group name on the rim." />
+          <Card icon={<IcoSelect />} title="Name a group" body="Lasso or Shift-click two or more nodes, then use the popup dropdown to assign an existing group, create a new one, or set None. Modify Node uses the same control for a single node. Each group keeps a hex color — right-click a group badge in the filter panel to edit name and color, or use the group picker on nodes. A colored membrane wraps the members, with the group name on the rim." />
           <Card
             icon={<IcoFlow />}
             title="Highlight flow"
@@ -235,14 +235,14 @@ export default function HelpTab() {
           <Card
             icon={<IcoFilter />}
             title="Search & filter"
-            body="Search titles, tap status pills, pick people, or use the Groups dropdown (multi-select, including Ungrouped). When the person row is too narrow, it becomes a searchable dropdown. If nothing matches, the filter panel says so. The map stays in place; filter changes only pan or zoom out so matches stay visible. Clear filters resets everything; Fit reframes matches."
+            body="Search titles, tap status pills, or click faces and group badges in the People and Groups grids (percent done on each badge). Groups multi-select, including Ungrouped. Click People or Groups headings to expand or collapse each grid. If nothing matches, the filter panel says so. Clear filters resets everything; Fit reframes matches."
           />
           <Card icon={<IcoStatus />} title="Status" body="Incomplete (red), in progress / WIP (gold), and done (green) — shown as the ring on each ball and in the filter pills." />
           <Card icon={<IcoPeople />} title="Assign people" body="Open the assignee dropdown on a node or multi-select panel. The closed row shows the current person; search to pick someone else or Unassigned. Assigned nodes use that person's Entra photo when Graph can reach it." />
           <Card
             icon={<IcoView />}
             title="View"
-            body="Fit, Reorg, Physics, Text, and Cards live under View. Node, Text, and Card sliders scale those pieces. Reorg untangles overlaps and stretches links — it does not pull the map into a gravity well. Physics lets nodes settle without a center pull. Advanced offers three-step Spread, Link length, and Padding — pick a level, then press Reorg (or Apply with Reorg) to restyle the map. Changing those levels alone does not move nodes. View rotation (compass) and these prefs stay on this device — Reset view prefs restores defaults."
+            body="Fit, Reorg, Physics, Text, and Cards live under View. Node, Text, and Card sliders scale those pieces. Reorg untangles overlaps and stretches links — it does not pull the map into a gravity well. Physics must be on for Advanced: five-step Spread, Link length, and Padding sliders apply to the live layout as you move them. View rotation (compass) and these prefs stay on this device — Reset view prefs restores defaults."
           />
         </div>
       </section>

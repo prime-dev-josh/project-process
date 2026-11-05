@@ -7,10 +7,12 @@ type Props = {
   step: number;
   value: number;
   onChange: (value: number) => void;
+  /** 0 = notify parent on every input (e.g. discrete force ticks). */
+  debounceMs?: number;
 };
 
-/** Keeps the thumb live while dragging; only notifies the parent on a short debounce or release. */
-export default function SliderField({ label, min, max, step, value, onChange }: Props) {
+/** Keeps the thumb live while dragging; debounces continuous sliders, or applies instantly when debounceMs is 0. */
+export default function SliderField({ label, min, max, step, value, onChange, debounceMs = 80 }: Props) {
   const [local, setLocal] = useState(value);
   const timer = useRef(0);
   const localRef = useRef(value);
@@ -46,11 +48,15 @@ export default function SliderField({ label, min, max, step, value, onChange }: 
         onChange={(e) => {
           const next = Number(e.target.value);
           setLocal(next);
+          if (debounceMs <= 0) {
+            onChange(next);
+            return;
+          }
           if (timer.current) window.clearTimeout(timer.current);
           timer.current = window.setTimeout(() => {
             timer.current = 0;
             onChange(next);
-          }, 80);
+          }, debounceMs);
         }}
         onPointerUp={() => flush(localRef.current)}
         onKeyUp={() => flush(localRef.current)}

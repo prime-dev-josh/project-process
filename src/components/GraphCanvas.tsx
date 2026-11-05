@@ -6,6 +6,12 @@ import { personStyle } from "../data/personStyle";
 import { NODE_FILL, graphTheme, nodeColor, sizeForLevel, withAlpha } from "../graph/colors";
 import { groupColorInk, groupPaintColor } from "../graph/groups";
 import {
+  layoutGroupLabels,
+  measureGroupLabelWidth,
+  paintGroupLabelBadge,
+  type ScreenRect,
+} from "../graph/groupLabelLayout";
+import {
   groupBlobHull,
   groupMemberRadius,
   hullApex,
@@ -483,11 +489,23 @@ function GraphCanvas({
   const interaction = useRef<
     | { type: "marquee"; points: Point[]; mode: LassoMode; sx0: number; sy0: number }
     | { type: "group"; lastX: number; lastY: number }
+    | {
+        type: "groupLabel";
+        id: string;
+        memberIds: string[];
+        lastGx: number;
+        lastGy: number;
+        moved: boolean;
+      }
     | { type: "pan"; sx: number; sy: number; cx: number; cy: number }
     | { type: "drag"; ids: string[]; lastX: number; lastY: number; sx: number; sy: number; moved: boolean }
     | null
   >(null);
+  const groupLabelOffsetRef = useRef(new Map<string, { dx: number; dy: number }>());
+  const groupLabelPinnedRef = useRef(new Set<string>());
+  const groupLabelHitRef = useRef<ScreenRect[]>([]);
   const [gesture, setGesture] = useState<"marquee" | "group" | "pan" | "drag" | null>(null);
+  const [dragLivePreview, setDragLivePreview] = useState(false);
   const [overBadge, setOverBadge] = useState(false);
   const rotationRef = useRef(rotation);
   rotationRef.current = rotation;
@@ -798,10 +816,10 @@ function GraphCanvas({
     linkForce?.strength?.(opts?.detangle ? 0.85 : 0.28);
     fg.d3Force("center", null);
     fg.d3Force("radial", null);
-    const structureKey = String(s.physics);
-    const structureChanged = opts?.rebuildStructure || lastPhysicsStructureKey.current !== structureKey;
+    const forceKey = `${s.physics}:${s.charge}:${s.linkDistance}:${s.collide}`;
+    const structureChanged = opts?.rebuildStructure || lastPhysicsStructureKey.current !== forceKey;
     if (structureChanged) {
-      lastPhysicsStructureKey.current = structureKey;
+      lastPhysicsStructureKey.current = forceKey;
       fg.d3Force(
         "collide",
         forceCollide((d: GraphNode) => collideRef.current + d.size * 8 + Math.max(0, 4 - d.level)).strength(0.92).iterations(opts?.detangle ? 4 : 3) as never,
@@ -812,14 +830,25 @@ function GraphCanvas({
       growLayoutRef.current = true;
       detangleLayout(nodesRef.current, linksRef.current, Math.max(36, s.linkDistance || 50));
     }
-    if (opts?.reheat && s.physics) fg.d3ReheatSimulation();
+    if (opts?.reheat && s.physics) {
+      fg.d3ReheatSimulation?.();
+      (fg as { d3Alpha?: (a: number) => void }).d3Alpha?.(0.35);
+    }
   }
 
   useEffect(() => {
     const handle = graphRef.current;
     if (handle) handle.applyViewForces = applyViewForces;
-    applyViewForces({ rebuildStructure: lastPhysicsStructureKey.current == null });
   });
+
+  useEffect(() => {
+    applyViewForces({ rebuildStructure: lastPhysicsStructureKey.current == null, reheat: settings.physics });
+  }, []);
+
+  useEffect(() => {
+    if (lastPhysicsStructureKey.current == null) return;
+    applyViewForces({ reheat: settings.physics, rebuildStructure: true });
+  }, [settings.charge, settings.linkDistance, settings.collide, settings.physics]);
 
   function canvasAtClient(clientX: number, clientY: number) {
     const rect = hostRef.current?.getBoundingClientRect();
@@ -839,6 +868,14 @@ function GraphCanvas({
   function graphAtClient(clientX: number, clientY: number) {
     const p = canvasAtClient(clientX, clientY);
     return graphRef.current?.screen2GraphCoords(p.x, p.y) ?? { x: 0, y: 0 };
+  }
+
+  function groupLabelAt(clientX: number, clientY: number) {
+    const p = canvasAtClient(clientX, clientY);
+    for (const hit of groupLabelHitRef.current) {
+      if (p.x >= hit.left && p.x <= hit.right && p.y >= hit.top && p.y <= hit.bottom) return hit.id;
+    }
+    return null;
   }
 
   function zoomK() {
@@ -1146,6 +1183,19 @@ function GraphCanvas({
     const cheap = simulatingRef.current;
     hullFrameRef.current += 1;
     const refreshCheap = cheap && hullFrameRef.current % 3 === 0;
+    const fg = graphRef.current as (GraphHandle & {
+      graph2ScreenCoords?: (x: number, y: number) => { x: number; y: number };
+      screen2GraphCoords?: (x: number, y: number) => { x: number; y: number };
+    }) | undefined;
+    const labelAnchors: { id: string; sx: number; sy: number; title: string }[] = [];
+    const labelWidths = new Map<string, number>();
+    const labelPaint: {
+      id: string;
+      color: string;
+      fade: number;
+      hovered: boolean;
+      title: string;
+    }[] = [];
     for (const spec of painted) {
       const sig = spec.disks.map((d) => `${d.x | 0},${d.y | 0}`).join(";");
       const cached = hullCacheRef.current.get(spec.group.id);
@@ -1182,17 +1232,53 @@ function GraphCanvas({
         return best;
       }, null);
       const title = group.title.trim() || "Untitled group";
-      inScreenSpace(ctx, apex?.x ?? disks[0].x, apex?.y ?? disks[0].y, globalScale, () => {
-        ctx.font = "700 11px \"Segoe UI\", sans-serif";
-        const w = ctx.measureText(title).width + 14;
-        ctx.fillStyle = withAlpha(color, hovered ? 0.98 : 0.95);
-        ctx.beginPath();
-        ctx.roundRect(-w / 2, -22, w, 18, 9);
-        ctx.fill();
-        ctx.fillStyle = groupColorInk(color);
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(title, 0, -13);
+      const ax = apex?.x ?? disks[0].x;
+      const ay = apex?.y ?? disks[0].y;
+      const screen = fg?.graph2ScreenCoords?.(ax, ay) ?? { x: 0, y: 0 };
+      labelWidths.set(group.id, measureGroupLabelWidth(ctx, title));
+      labelAnchors.push({ id: group.id, sx: screen.x, sy: screen.y, title });
+      labelPaint.push({ id: group.id, color, fade, hovered, title });
+      ctx.restore();
+    }
+
+    const placements = layoutGroupLabels(
+      labelAnchors,
+      labelWidths,
+      groupLabelOffsetRef.current,
+      groupLabelPinnedRef.current,
+    );
+    groupLabelHitRef.current = placements.map((p) => ({
+      id: p.id,
+      left: p.cx - p.w / 2,
+      top: p.cy - p.h / 2,
+      right: p.cx + p.w / 2,
+      bottom: p.cy + p.h / 2,
+    }));
+
+    for (const place of placements) {
+      const meta = labelPaint.find((m) => m.id === place.id);
+      if (!meta) continue;
+      const graphPt = fg?.screen2GraphCoords?.(place.cx, place.cy) ?? { x: 0, y: 0 };
+      const pointer = cursorGraph.current;
+      const pointerCanvas = pointer && fg?.graph2ScreenCoords?.(pointer.x, pointer.y);
+      const labelHovered =
+        meta.hovered ||
+        Boolean(
+          pointerCanvas &&
+            pointerCanvas.x >= place.cx - place.w / 2 &&
+            pointerCanvas.x <= place.cx + place.w / 2 &&
+            pointerCanvas.y >= place.cy - place.h / 2 &&
+            pointerCanvas.y <= place.cy + place.h / 2,
+        );
+      ctx.save();
+      ctx.globalAlpha = meta.fade;
+      inScreenSpace(ctx, graphPt.x, graphPt.y, globalScale, () => {
+        paintGroupLabelBadge(ctx, {
+          title: meta.title,
+          fill: withAlpha(meta.color, labelHovered ? 0.98 : 0.95),
+          ink: groupColorInk(meta.color),
+          w: place.w,
+        });
       }, labelUnrotate());
       ctx.restore();
     }
@@ -1202,6 +1288,19 @@ function GraphCanvas({
     if (!dx && !dy) return;
     for (const n of liveEngineNodes()) {
       if (!selectedSet.has(n.id)) continue;
+      n.x = (n.x ?? 0) + dx;
+      n.y = (n.y ?? 0) + dy;
+      n.fx = n.x;
+      n.fy = n.y;
+      n.vx = 0;
+      n.vy = 0;
+    }
+  }
+
+  function moveGroupMembers(ids: Set<string>, dx: number, dy: number) {
+    if (!dx && !dy) return;
+    for (const n of liveEngineNodes()) {
+      if (!ids.has(n.id)) continue;
       n.x = (n.x ?? 0) + dx;
       n.y = (n.y ?? 0) + dy;
       n.fx = n.x;
@@ -1373,6 +1472,28 @@ function GraphCanvas({
           onMarquee([badgeId], "subtract");
           return;
         }
+        const groupLabelId = groupLabelAt(e.clientX, e.clientY);
+        if (groupLabelId) {
+          skipBg.current = true;
+          const memberIds = liveEngineNodes()
+            .filter((n) => n.groupId === groupLabelId && isShown(n))
+            .map((n) => n.id);
+          if (memberIds.length) handlersRef.current.onMarquee(memberIds, "replace");
+          const g = graphAtClient(e.clientX, e.clientY);
+          interaction.current = {
+            type: "groupLabel",
+            id: groupLabelId,
+            memberIds,
+            lastGx: g.x,
+            lastGy: g.y,
+            moved: false,
+          };
+          setDragLivePreview(true);
+          setGesture("group");
+          hostRef.current?.style.setProperty("cursor", "grabbing");
+          (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+          return;
+        }
         const hit = nodeAt(e.clientX, e.clientY);
         if (hit) {
           skipBg.current = true;
@@ -1384,6 +1505,7 @@ function GraphCanvas({
               ? [...selectedSet]
               : [hit.id];
           interaction.current = { type: "drag", ids, lastX: g.x, lastY: g.y, sx: e.clientX, sy: e.clientY, moved: false };
+          setDragLivePreview(true);
           setGesture("drag");
           (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
           return;
@@ -1393,6 +1515,7 @@ function GraphCanvas({
         const hull = selectedSet.size > 1 ? selectionHull() : null;
         if (hull && g.x >= hull.x && g.x <= hull.x + hull.w && g.y >= hull.y && g.y <= hull.y + hull.h) {
           interaction.current = { type: "group", lastX: g.x, lastY: g.y };
+          setDragLivePreview(true);
           setGesture("group");
           skipBg.current = true;
           (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
@@ -1416,9 +1539,14 @@ function GraphCanvas({
           const badge = deselectBadgeAt(e.clientX, e.clientY);
           setOverBadge(badge != null);
           onHover(badge ?? nodeAt(e.clientX, e.clientY, 12)?.id ?? null);
+          const host = hostRef.current;
+          if (host) host.style.cursor = groupLabelAt(e.clientX, e.clientY) ? "grab" : "";
         }
         const it = interaction.current;
         if (!it) return;
+        if (it.type === "groupLabel") {
+          hostRef.current?.style.setProperty("cursor", "grabbing");
+        }
         if (it.type === "marquee") {
           const g = graphAtClient(e.clientX, e.clientY);
           const k = zoomK();
@@ -1435,6 +1563,21 @@ function GraphCanvas({
           moveSelected(g.x - it.lastX, g.y - it.lastY);
           it.lastX = g.x;
           it.lastY = g.y;
+          hullCacheRef.current.clear();
+          graphRef.current?.resumeAnimation?.();
+          skipBg.current = true;
+        } else if (it.type === "groupLabel") {
+          const g = graphAtClient(e.clientX, e.clientY);
+          const dx = g.x - it.lastGx;
+          const dy = g.y - it.lastGy;
+          if (dx || dy) {
+            moveGroupMembers(new Set(it.memberIds), dx, dy);
+            it.lastGx = g.x;
+            it.lastGy = g.y;
+            it.moved = true;
+            hullCacheRef.current.clear();
+          }
+          graphRef.current?.resumeAnimation?.();
           skipBg.current = true;
         } else if (it.type === "drag") {
           const g = graphAtClient(e.clientX, e.clientY);
@@ -1454,6 +1597,8 @@ function GraphCanvas({
           }
           it.lastX = g.x;
           it.lastY = g.y;
+          hullCacheRef.current.clear();
+          graphRef.current?.resumeAnimation?.();
           skipBg.current = true;
         } else if (it.type === "pan") {
           const k = zoomK();
@@ -1463,8 +1608,15 @@ function GraphCanvas({
       }}
       onPointerUp={(e) => {
         const it = interaction.current;
+        const endDragLivePreview =
+          it?.type === "groupLabel" || it?.type === "drag" || it?.type === "group" || dragLivePreview;
         interaction.current = null;
+        if (endDragLivePreview) setDragLivePreview(false);
         setGesture(spaceHeld.current ? "pan" : null);
+        const host = hostRef.current;
+        if (host) {
+          host.style.cursor = groupLabelAt(e.clientX, e.clientY) ? "grab" : "";
+        }
         if (!it && e.button === 0 && (connectArmed || placeArmed)) {
           armedClickHandled.current = false;
           skipBg.current = true;
@@ -1501,6 +1653,16 @@ function GraphCanvas({
               .filter((n) => idSet.has(n.id) && n.x != null && n.y != null)
               .map((n) => ({ id: n.id, x: n.x as number, y: n.y as number })),
           );
+        } else if (it.type === "groupLabel") {
+          const idSet = new Set(it.memberIds);
+          releaseHeld(idSet);
+          if (it.moved) {
+            onGroupMoveEnd(
+              liveEngineNodes()
+                .filter((n) => idSet.has(n.id) && n.x != null && n.y != null)
+                .map((n) => ({ id: n.id, x: n.x as number, y: n.y as number })),
+            );
+          }
         }
       }}
       onPointerLeave={() => {
@@ -1544,7 +1706,7 @@ function GraphCanvas({
       enablePanInteraction={false}
       enableZoomInteraction={false}
       enablePointerInteraction={connectArmed || placeArmed}
-      autoPauseRedraw={!highlightFlow}
+      autoPauseRedraw={!highlightFlow && !dragLivePreview}
       warmupTicks={settings.physics && !revealing ? 20 : 0}
       nodeCanvasObjectMode={() => "replace"}
       onZoom={(t) => onZoom(t.k)}
@@ -2062,6 +2224,9 @@ function GraphCanvas({
 function lookSettingsEqual(a: GraphSettings, b: GraphSettings) {
   return (
     a.physics === b.physics &&
+    a.charge === b.charge &&
+    a.linkDistance === b.linkDistance &&
+    a.collide === b.collide &&
     a.enlarge === b.enlarge &&
     a.textScale === b.textScale &&
     a.cardScale === b.cardScale &&

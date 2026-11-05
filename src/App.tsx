@@ -399,13 +399,13 @@ export default function App() {
     setSettings((current) => {
       const next = mergeViewSettings(current, patch);
       settingsRef.current = next;
+      if (forceOnly) {
+        graphRef.current?.applyViewForces?.({ reheat: next.physics, rebuildStructure: true });
+      } else if (patch.physics !== undefined) {
+        graphRef.current?.applyViewForces?.({ rebuildStructure: true, reheat: Boolean(next.physics) });
+      }
       return next;
     });
-    if (forceOnly) {
-      graphRef.current?.applyViewForces?.({ reheat: false });
-    } else if (patch.physics !== undefined) {
-      graphRef.current?.applyViewForces?.({ rebuildStructure: true, reheat: false });
-    }
   }
 
   function updateNode(id: string, patch: Partial<GraphNode>) {
