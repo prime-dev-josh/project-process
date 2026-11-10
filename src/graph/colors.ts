@@ -6,16 +6,6 @@ export const LEVEL_COLORS = ["#f43f5e", "#f59e0b", "#34d399"];
 /** Shared fill for every canvas node; status is drawn as the border. */
 export const NODE_FILL = "#5b9bd5";
 
-export const SIZE_PRESETS = [
-  { value: 0.5, label: "XS", dot: 8 },
-  { value: 1.5, label: "S", dot: 11 },
-  { value: 2.5, label: "M", dot: 14 },
-  { value: 3.5, label: "L", dot: 18 },
-  { value: 4.5, label: "XL", dot: 22 },
-  { value: 5.5, label: "2XL", dot: 26 },
-  { value: 6.5, label: "3XL", dot: 32 },
-] as const;
-
 export const TYPE_COLORS: Record<NodeKind, string> = {
   concept: "#7dd3fc",
   category: "#e67e22",
@@ -23,8 +13,8 @@ export const TYPE_COLORS: Record<NodeKind, string> = {
   info: "#c4b5fd",
 };
 
-export function sizeForLevel(level: number) {
-  return Math.max(0.62, 1.72 - level * 0.2);
+export function sizeForLevel(_level?: number) {
+  return 1.5;
 }
 
 export function normalizeHex(hex: string) {

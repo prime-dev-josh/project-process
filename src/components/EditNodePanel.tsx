@@ -13,7 +13,7 @@ import type { ColorBy, GraphGroup, GraphNode } from "../types";
 import DeferredTextField from "./DeferredTextField";
 import EmployeePicker from "./EmployeePicker";
 import GroupPicker from "./GroupPicker";
-import SizePresetPicker from "./SizePresetPicker";
+import ClassPicker from "./ClassPicker";
 
 export type NodeEditPreview = {
   size: number;
@@ -148,9 +148,9 @@ export default function EditNodePanel({ node, nodes, groups, colorBy, embedded =
         onUpdateGroup={onUpdateGroup}
       />
       <label className={fieldLabel}>
-        Size <span className="font-normal normal-case tracking-normal">· saves instantly</span>
+        Class <span className="font-normal normal-case tracking-normal">· saves instantly</span>
       </label>
-      <SizePresetPicker value={node.size} onSelect={(size) => save({ size })} />
+      <ClassPicker value={node.size} onSelect={(size) => save({ size })} />
     </div>
   );
 }

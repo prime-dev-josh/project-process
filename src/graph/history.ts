@@ -236,7 +236,7 @@ export function diffSnapshots(saved: GraphSnapshot, current: GraphSnapshot): Cha
       details.push("Employee changed");
     }
     if ((prev.groupId ?? null) !== (node.groupId ?? null)) details.push("Group changed");
-    if (Math.abs((prev.size ?? 1) - (node.size ?? 1)) > 0.04) details.push("Size changed");
+    if (Math.abs((prev.size ?? 1) - (node.size ?? 1)) > 0.04) details.push("Class changed");
     if (details.length) {
       changes.push({
         id: `node-upd-${node.id}`,

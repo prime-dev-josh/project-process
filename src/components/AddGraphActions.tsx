@@ -1,6 +1,6 @@
 import type { ArrowStyle } from "../types";
 import LinkMenuOptions from "./LinkMenuOptions";
-import SizePresetPicker from "./SizePresetPicker";
+import ClassPicker from "./ClassPicker";
 
 type Props = {
   accent?: string;
@@ -15,7 +15,7 @@ export default function AddGraphActions({ accent, onAddNode, onLink }: Props) {
         Add node
       </div>
       <div className="px-0.5">
-        <SizePresetPicker compact accent={accent} onSelect={onAddNode} />
+        <ClassPicker compact accent={accent} onSelect={onAddNode} />
       </div>
       <LinkMenuOptions compact onLink={onLink} />
     </>

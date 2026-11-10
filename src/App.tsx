@@ -114,6 +114,7 @@ export default function App() {
   const [editLocked, setEditLocked] = useState(false);
   const [previewAnchorId, setPreviewAnchorId] = useState<string | null>(null);
   const [groupLabelHover, setGroupLabelHover] = useState(false);
+  const [nodesMoving, setNodesMoving] = useState(false);
   const previewOverRef = useRef(false);
   const [pendingEdit, setPendingEdit] = useState<PendingEdit | null>(null);
   const [editVisual, setEditVisual] = useState<NodeEditPreview | null>(null);
@@ -423,7 +424,7 @@ export default function App() {
     if (patch.color && Object.keys(patch).length === 1) {
       label = `Changed status of ${name}`;
     } else if (patch.size !== undefined && Object.keys(patch).length === 1) {
-      label = `Resized ${name}`;
+      label = `Changed class of ${name}`;
     } else if (patch.employee !== undefined && Object.keys(patch).length <= 2) {
       label = `Assigned ${name}`;
     } else if (patch.groupId !== undefined && Object.keys(patch).length === 1) {
@@ -754,25 +755,6 @@ export default function App() {
     window.setTimeout(() => fg.zoom?.(bounds.fitZoom, 400), 0);
   }, [visibleNodeBounds]);
 
-  /** After filter changes: pan (and zoom out only if needed). Never zoom in tighter than the current view. */
-  const ensureFilteredVisible = useCallback(() => {
-    const fg = graphRef.current as
-      | (GraphHandle & {
-          centerAt?: (x: number, y: number, ms?: number) => void;
-          zoom?: (k?: number, ms?: number) => number;
-        })
-      | undefined;
-    const bounds = visibleNodeBounds();
-    if (!fg || !bounds) return;
-    const current = fg.zoom?.();
-    if (current == null || !Number.isFinite(current)) return;
-    const nextZoom = Math.min(current, bounds.fitZoom);
-    if (Math.abs(nextZoom - current) > 1e-4) {
-      window.setTimeout(() => fg.zoom?.(nextZoom, 400), 0);
-    }
-    fg.centerAt?.(bounds.cx, bounds.cy, 400);
-  }, [visibleNodeBounds]);
-
   const clearFilters = useCallback(() => {
     setSearch("");
     setStatusFilters([]);
@@ -780,14 +762,24 @@ export default function App() {
     setGroupFilters([]);
   }, []);
 
-  const filterViewKey = `${statusFilters.join(",")}|${employeeFilter ?? ""}|${groupFilters.join(",")}|${search.trim() ? "q" : ""}`;
-  const ensureFilteredVisibleRef = useRef(ensureFilteredVisible);
-  ensureFilteredVisibleRef.current = ensureFilteredVisible;
   useEffect(() => {
-    if (!fittedOnce.current || mapRevealing) return;
-    const timer = window.setTimeout(() => ensureFilteredVisibleRef.current(), 40);
-    return () => window.clearTimeout(timer);
-  }, [filterViewKey, mapRevealing]);
+    const options = { statusFilters, employeeEmail: employeeFilter, groupIds: groupFilters };
+    const onMap = (id: string) => {
+      const node = nodeById.get(id);
+      if (!node) return false;
+      if (!hideFiltered) return true;
+      return isFiltered(node, search, settings.colorBy, options);
+    };
+    setSelectedIds((prev) => {
+      const next = prev.filter(onMap);
+      return next.length === prev.length ? prev : next;
+    });
+    setEditingId((cur) => (cur && !onMap(cur) ? null : cur));
+    setPicked((cur) => {
+      if (!cur || cur.kind !== "node") return cur;
+      return onMap(cur.id) ? cur : null;
+    });
+  }, [hideFiltered, search, statusFilters, employeeFilter, groupFilters, nodeById, settings.colorBy]);
 
   useEffect(() => {
     if (mapLoading || !nodes.length || size.w < 200) return;
@@ -897,7 +889,7 @@ export default function App() {
       left: Math.min(window.innerWidth - 160, Math.max(12, s.left + 12)),
       top: Math.min(window.innerHeight - 56, Math.max(60, s.top - 18)),
     };
-  }, [picked, selectedIds, links, size, zoom, viewRotation, settings.enlarge]);
+  }, [picked, selectedIds, links, nodes, size, zoom, viewRotation, settings.enlarge, nodesMoving]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -1051,6 +1043,7 @@ export default function App() {
               });
             }}
             onGroupMoveEnd={(positions) => savePositions(positions, `Moved ${positions.length} nodes`)}
+            onNodesMoving={setNodesMoving}
             onSelectLink={pickLink}
             onHover={setHoveredId}
             onGroupLabelHover={setGroupLabelHover}
@@ -1144,7 +1137,7 @@ export default function App() {
       </div>
       </div>
 
-      {selectedIds.length > 1 && !menu && !editingLink && !connect && !placing && (
+      {selectedIds.length > 1 && !menu && !editingLink && !connect && !placing && !nodesMoving && (
         <SelectionPanel
           key={selectedIds.join("|")}
           nodes={nodes.filter((n) => selectedIds.includes(n.id))}

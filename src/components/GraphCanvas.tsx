@@ -4,6 +4,7 @@ import ForceGraph2D, { type ForceGraphMethods } from "react-force-graph-2d";
 import { users } from "../data/users";
 import { personStyle } from "../data/personStyle";
 import { NODE_FILL, graphTheme, nodeColor, sizeForLevel, withAlpha } from "../graph/colors";
+import { nodeClassFromSize, type NodeClass } from "../graph/nodeClass";
 import { groupColorInk, groupPaintColor } from "../graph/groups";
 import {
   layoutGroupLabels,
@@ -33,7 +34,7 @@ import { detangleLayout } from "../graph/detangle";
 import { buildUndirectedAdjacency, nodesWithinHops } from "../graph/elasticDrag";
 import { GRAPH_MAX_ZOOM, GRAPH_MIN_ZOOM } from "../graph/viewSettings";
 import { placeRevealedNode, revealedNeighbor, revealOrder, topologyKey } from "../graph/stagedReveal";
-import { isFiltered, linkEnds } from "../graph/visibility";
+import { filterGraph, isFiltered, linkEnds } from "../graph/visibility";
 import { STATUS_COLORS, type WorkflowStatus } from "../graph/workflowStatus";
 import { loadPersonPhoto } from "../lib/personPhoto";
 import type { ArrowStyle, GraphGroup, GraphLink, GraphNode, GraphSettings } from "../types";
@@ -75,6 +76,8 @@ type Props = {
   onSelect: (id: string | null, additive?: boolean) => void;
   onMarquee: (ids: string[], mode: LassoMode) => void;
   onGroupMoveEnd: (positions: { id: string; x: number; y: number }[]) => void;
+  /** True while a node/group drag is actually moving the map. */
+  onNodesMoving?: (moving: boolean) => void;
   onSelectLink: (id: string) => void;
   onHover: (id: string | null) => void;
   /** Fired when the pointer enters or leaves a group name pill on the map. */
@@ -199,6 +202,32 @@ function inScreenSpace(
   ctx.restore();
 }
 
+function traceNodeClassPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+  cls: NodeClass,
+) {
+  if (cls === "start") {
+    const h = r * Math.sqrt(3);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x - r * 0.5, y - h / 2);
+    ctx.lineTo(x - r * 0.5, y + h / 2);
+    ctx.closePath();
+    return;
+  }
+  if (cls === "end") {
+    const half = r * 0.86;
+    ctx.beginPath();
+    ctx.roundRect(x - half, y - half, half * 2, half * 2, half * 0.28);
+    return;
+  }
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+}
+
 function drawUnassignedIcon(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
   const size = r * 1.42;
   ctx.save();
@@ -226,6 +255,7 @@ function paintNodeDisc(
     fill: string;
     border: string;
     globalScale: number;
+    cls?: NodeClass;
     selected?: boolean;
     hovered?: boolean;
     photo?: HTMLImageElement;
@@ -235,20 +265,19 @@ function paintNodeDisc(
   },
 ) {
   const { x, y, r, fill, border, globalScale, selected, hovered, photo, initials, unassigned, unrotate = 0 } = args;
+  const cls = args.cls ?? "general";
   const statusW = (selected || hovered ? 2.8 : 2.2) / globalScale;
   const inkW = Math.max(1.05 / globalScale, r * 0.08);
   const innerR = Math.max(r * 0.62, r - statusW - inkW);
 
-  ctx.beginPath();
-  ctx.arc(x, y, innerR, 0, Math.PI * 2);
+  traceNodeClassPath(ctx, x, y, innerR, cls);
   ctx.fillStyle = fill;
   ctx.fill();
 
   inScreenSpace(ctx, x, y, globalScale, (k) => {
     const innerScreen = innerR * k;
     const face = Math.min(innerScreen, 12);
-    ctx.beginPath();
-    ctx.arc(0, 0, innerScreen, 0, Math.PI * 2);
+    traceNodeClassPath(ctx, 0, 0, innerScreen, cls);
     ctx.clip();
     if (photo && photo.naturalWidth) {
       const cover = innerScreen * 2;
@@ -267,14 +296,12 @@ function paintNodeDisc(
     }
   }, unrotate);
 
-  ctx.beginPath();
-  ctx.arc(x, y, innerR, 0, Math.PI * 2);
+  traceNodeClassPath(ctx, x, y, innerR, cls);
   ctx.strokeStyle = "#111111";
   ctx.lineWidth = inkW;
   ctx.stroke();
 
-  ctx.beginPath();
-  ctx.arc(x, y, innerR + inkW * 0.5 + statusW * 0.5, 0, Math.PI * 2);
+  traceNodeClassPath(ctx, x, y, innerR + inkW * 0.5 + statusW * 0.5, cls);
   ctx.strokeStyle = border;
   ctx.lineWidth = statusW;
   ctx.stroke();
@@ -432,6 +459,7 @@ function GraphCanvas({
   onSelect,
   onMarquee,
   onGroupMoveEnd,
+  onNodesMoving,
   onSelectLink,
   onHover,
   onGroupLabelHover,
@@ -452,6 +480,7 @@ function GraphCanvas({
     onSelect,
     onMarquee,
     onGroupMoveEnd,
+    onNodesMoving,
     onSelectLink,
     onHover,
     onEditLink,
@@ -469,6 +498,7 @@ function GraphCanvas({
     onSelect,
     onMarquee,
     onGroupMoveEnd,
+    onNodesMoving,
     onSelectLink,
     onHover,
     onEditLink,
@@ -492,7 +522,7 @@ function GraphCanvas({
   const fgContextHandled = useRef(false);
   const interaction = useRef<
     | { type: "marquee"; points: Point[]; mode: LassoMode; sx0: number; sy0: number }
-    | { type: "group"; lastX: number; lastY: number }
+    | { type: "group"; lastX: number; lastY: number; moved: boolean }
     | {
         type: "groupLabel";
         id: string;
@@ -510,6 +540,13 @@ function GraphCanvas({
   const groupLabelHitRef = useRef<ScreenRect[]>([]);
   /** True while the pointer is over a group name pill (blocks node hover cards). */
   const suppressNodeHoverRef = useRef(false);
+  const nodesMovingRef = useRef(false);
+
+  function setNodesMoving(moving: boolean) {
+    if (nodesMovingRef.current === moving) return;
+    nodesMovingRef.current = moving;
+    handlersRef.current.onNodesMoving?.(moving);
+  }
   const groupLabelPointerRef = useRef(false);
   const [gesture, setGesture] = useState<"marquee" | "group" | "pan" | "drag" | null>(null);
   const [dragLivePreview, setDragLivePreview] = useState(false);
@@ -527,23 +564,36 @@ function GraphCanvas({
     () => ({ statusFilters, employeeEmail: employeeFilter, groupIds: groupFilters }),
     [statusFilters, employeeFilter, groupFilters],
   );
+  const [mapSearch, setMapSearch] = useState(search);
+  useEffect(() => {
+    const delay = search.trim() ? 220 : 0;
+    const timer = window.setTimeout(() => setMapSearch(search), delay);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+  const { nodes: mapNodes, links: mapLinks } = useMemo(
+    () => filterGraph(nodes, links, mapSearch, settings.colorBy, filterOptions),
+    [nodes, links, mapSearch, settings.colorBy, filterOptions],
+  );
+  const filterKey = `${mapSearch.trim()}|${statusFilters.join(",")}|${employeeFilter ?? ""}|${groupFilters.join(",")}`;
 
   const [revealedIds, setRevealedIds] = useState<string[]>([]);
   const [initReveal, setInitReveal] = useState(true);
   const revealedRef = useRef<string[]>([]);
   const orderRef = useRef<string[]>([]);
   const topologyRef = useRef("");
+  const filterKeyRef = useRef(filterKey);
   const revealingRef = useRef(false);
   const initRevealRef = useRef(false);
   const growLayoutRef = useRef(false);
   const revealBornRef = useRef(new Map<string, number>());
   const revealCamRef = useRef({ cx: 0, cy: 0, k: REVEAL_ZOOM_MAX, armed: false });
+  const bootOverlayRef = useRef(true);
   const onRevealActiveRef = useRef(onRevealActive);
   onRevealActiveRef.current = onRevealActive;
   revealedRef.current = revealedIds;
 
-  const graphKey = useMemo(() => topologyKey(nodes, links), [nodes, links]);
-  const revealing = revealedIds.length < nodes.length;
+  const graphKey = useMemo(() => topologyKey(mapNodes, mapLinks), [mapNodes, mapLinks]);
+  const revealing = revealedIds.length < mapNodes.length;
   revealingRef.current = revealing;
   initRevealRef.current = initReveal;
 
@@ -555,18 +605,23 @@ function GraphCanvas({
   }
 
   useEffect(() => {
+    if (!bootOverlayRef.current) return;
     onRevealActiveRef.current?.(initReveal);
+    if (!initReveal) bootOverlayRef.current = false;
   }, [initReveal]);
 
   useEffect(() => {
-    const order = revealOrder(nodes, links);
+    const order = revealOrder(mapNodes, mapLinks);
     orderRef.current = order;
     const prevKey = topologyRef.current;
-    const have = new Set(revealedRef.current.filter((id) => nodes.some((n) => n.id === id)));
-    const added = nodes.filter((n) => !have.has(n.id)).length;
-    const smallEdit = Boolean(prevKey) && have.size > 0 && added <= 3 && have.size >= nodes.length - 3;
+    const filterChanged = filterKeyRef.current !== filterKey;
+    filterKeyRef.current = filterKey;
+    const have = new Set(revealedRef.current.filter((id) => mapNodes.some((n) => n.id === id)));
+    const added = mapNodes.filter((n) => !have.has(n.id)).length;
+    const smallEdit =
+      !filterChanged && Boolean(prevKey) && have.size > 0 && added <= 3 && have.size >= mapNodes.length - 3;
     topologyRef.current = graphKey;
-    if (!nodes.length) {
+    if (!mapNodes.length) {
       growLayoutRef.current = false;
       revealBornRef.current.clear();
       setInitReveal(false);
@@ -574,14 +629,14 @@ function GraphCanvas({
       return;
     }
     if (smallEdit) {
-      setRevealedIds(order.filter((id) => have.has(id) || nodes.some((n) => n.id === id && !have.has(n.id))));
+      setRevealedIds(order.filter((id) => have.has(id) || mapNodes.some((n) => n.id === id && !have.has(n.id))));
       return;
     }
     growLayoutRef.current = true;
     revealBornRef.current.clear();
     setInitReveal(true);
     setRevealedIds([]);
-  }, [graphKey]);
+  }, [graphKey, filterKey]);
 
   useEffect(() => {
     const order = orderRef.current;
@@ -690,35 +745,35 @@ function GraphCanvas({
   }, [initReveal, revealing]);
 
   useEffect(() => {
-    if (initReveal || !nodes.length) return;
+    if (initReveal || !mapNodes.length) return;
     const timer = window.setTimeout(() => {
-      graphRef.current?.applyViewForces?.({ reheat: Boolean(settingsRef.current.physics) });
+      graphRef.current?.applyViewForces?.({ rebuildStructure: true, reheat: Boolean(settingsRef.current.physics) });
       handlersRef.current.onSettle();
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [initReveal, nodes.length]);
+  }, [initReveal, mapNodes.length, graphKey]);
 
   const visibleIdSet = useMemo(() => new Set(revealedIds), [revealedIds]);
   const graphData = useMemo(
     () => {
-      const shown = revealing ? nodes.filter((n) => visibleIdSet.has(n.id)) : nodes;
-      const shownIds = revealing ? visibleIdSet : null;
+      const shown = revealing ? mapNodes.filter((n) => visibleIdSet.has(n.id)) : mapNodes;
+      const shownIds = new Set(shown.map((n) => n.id));
       return {
         nodes: shown,
-        links: links.flatMap((l) => {
+        links: mapLinks.flatMap((l) => {
           const e = linkEnds(l);
-          if (shownIds && (!shownIds.has(e.source) || !shownIds.has(e.target))) return [];
+          if (!shownIds.has(e.source) || !shownIds.has(e.target)) return [];
           return [{ id: l.id, source: e.source, target: e.target, kind: l.kind, arrows: l.arrows ?? "none" }];
         }),
       };
     },
-    [nodes, links, revealing, visibleIdSet],
+    [mapNodes, mapLinks, revealing, visibleIdSet],
   );
 
   function isShown(node: GraphNode | undefined) {
     if (!node) return false;
-    if (!hideFiltered) return true;
-    return isFiltered(node, search, settings.colorBy, filterOptions);
+    if (!hideFiltered && !mapSearch.trim()) return true;
+    return isFiltered(node, mapSearch, settings.colorBy, filterOptions);
   }
 
   const highlightSet = useMemo(
@@ -806,11 +861,17 @@ function GraphCanvas({
   const REST_LINK_STRENGTH = 0.28;
   const ELASTIC_HOPS_PHYSICS = 5;
   const ELASTIC_HOPS_NO_PHYSICS = 512;
-  nodesRef.current = nodes;
-  linksRef.current = links;
+  nodesRef.current = mapNodes;
+  linksRef.current = mapLinks;
   groupsRef.current = groups;
   collideRef.current = settingsRef.current.collide;
   enlargeRef.current = settingsRef.current.enlarge;
+
+  useEffect(() => {
+    if (!initReveal) return;
+    hullCacheRef.current.clear();
+    lastPhysicsStructureKey.current = null;
+  }, [graphKey, initReveal]);
 
   function applyViewForces(opts?: { reheat?: boolean; rebuildStructure?: boolean; detangle?: boolean }) {
     const fg = graphRef.current;
@@ -944,7 +1005,7 @@ function GraphCanvas({
     for (const node of liveEngineNodes()) {
       if (node.x == null || node.y == null) continue;
       if (!isShown(node)) continue;
-      const matched = isFiltered(node, search, settings.colorBy, filterOptions);
+      const matched = isFiltered(node, mapSearch, settings.colorBy, filterOptions);
       const dim = !matched || isFlowDim(node);
       const selected = selectedSet.has(node.id);
       const hovered = node.id === hoveredId;
@@ -1568,7 +1629,7 @@ function GraphCanvas({
         const g = graphAtClient(e.clientX, e.clientY);
         const hull = selectedSet.size > 1 ? selectionHull() : null;
         if (hull && g.x >= hull.x && g.x <= hull.x + hull.w && g.y >= hull.y && g.y <= hull.y + hull.h) {
-          interaction.current = { type: "group", lastX: g.x, lastY: g.y };
+          interaction.current = { type: "group", lastX: g.x, lastY: g.y, moved: false };
           setDragLivePreview(true);
           setGesture("group");
           skipBg.current = true;
@@ -1620,10 +1681,16 @@ function GraphCanvas({
           if (Math.hypot(e.clientX - it.sx0, e.clientY - it.sy0) > 5) skipBg.current = true;
         } else if (it.type === "group") {
           const g = graphAtClient(e.clientX, e.clientY);
-          moveSelected(g.x - it.lastX, g.y - it.lastY);
-          it.lastX = g.x;
-          it.lastY = g.y;
-          hullCacheRef.current.clear();
+          const dx = g.x - it.lastX;
+          const dy = g.y - it.lastY;
+          if (dx || dy) {
+            if (!it.moved) setNodesMoving(true);
+            it.moved = true;
+            moveSelected(dx, dy);
+            it.lastX = g.x;
+            it.lastY = g.y;
+            hullCacheRef.current.clear();
+          }
           graphRef.current?.resumeAnimation?.();
           skipBg.current = true;
         } else if (it.type === "groupLabel") {
@@ -1631,6 +1698,7 @@ function GraphCanvas({
           const dx = g.x - it.lastGx;
           const dy = g.y - it.lastGy;
           if (dx || dy) {
+            if (!it.moved) setNodesMoving(true);
             moveGroupMembers(new Set(it.memberIds), dx, dy);
             it.lastGx = g.x;
             it.lastGy = g.y;
@@ -1642,6 +1710,7 @@ function GraphCanvas({
         } else if (it.type === "drag") {
           const g = graphAtClient(e.clientX, e.clientY);
           if (!it.moved && Math.hypot(e.clientX - it.sx, e.clientY - it.sy) < 4) return;
+          if (!it.moved) setNodesMoving(true);
           it.moved = true;
           const idSet = new Set(it.ids);
           const dx = g.x - it.lastX;
@@ -1726,6 +1795,7 @@ function GraphCanvas({
             );
           }
         }
+        setNodesMoving(false);
       }}
       onPointerLeave={() => {
         suppressNodeHoverRef.current = false;
@@ -1871,8 +1941,8 @@ function GraphCanvas({
         const src = nodeById.get(e.source);
         const tgt = nodeById.get(e.target);
         const filterDim =
-          (src && !isFiltered(src, search, settings.colorBy, filterOptions)) ||
-          (tgt && !isFiltered(tgt, search, settings.colorBy, filterOptions));
+          (src && !isFiltered(src, mapSearch, settings.colorBy, filterOptions)) ||
+          (tgt && !isFiltered(tgt, mapSearch, settings.colorBy, filterOptions));
         if (filterDim || isFlowLinkDim(l)) return fadeColor(palette.linkDim, fade);
         const pulse = flowPulseAmount(l);
         if (pulse > 0.05) return fadeColor(pulseStroke(pulse, theme), fade);
@@ -1901,8 +1971,8 @@ function GraphCanvas({
         const src = nodeById.get(e.source);
         const tgt = nodeById.get(e.target);
         const filterDim =
-          (src && !isFiltered(src, search, settings.colorBy, filterOptions)) ||
-          (tgt && !isFiltered(tgt, search, settings.colorBy, filterOptions));
+          (src && !isFiltered(src, mapSearch, settings.colorBy, filterOptions)) ||
+          (tgt && !isFiltered(tgt, mapSearch, settings.colorBy, filterOptions));
         if (filterDim || isFlowLinkDim(l)) return fadeColor(palette.linkDim, fade);
         const pulse = flowPulseAmount(l);
         if (pulse > 0.05) return fadeColor(pulseStroke(pulse, theme), fade);
@@ -1920,8 +1990,8 @@ function GraphCanvas({
         ctx.globalAlpha = Math.min(revealOpacity(src.id), revealOpacity(tgt.id));
         const e = linkEnds(link);
         const filterDim =
-          !isFiltered(src, search, settings.colorBy, filterOptions) ||
-          !isFiltered(tgt, search, settings.colorBy, filterOptions);
+          !isFiltered(src, mapSearch, settings.colorBy, filterOptions) ||
+          !isFiltered(tgt, mapSearch, settings.colorBy, filterOptions);
         const pulse = flowPulseAmount(link);
         const hot = link.id === selectedLinkId || selectedSet.has(e.source) || selectedSet.has(e.target);
         const onFlow = highlightFlow && isFlowLink(link, highlightFlow.hops);
@@ -1970,7 +2040,7 @@ function GraphCanvas({
         const x = node.x ?? 0;
         const y = node.y ?? 0;
         const border = nodeColor(node, settings.colorBy);
-        const matched = isFiltered(node, search, settings.colorBy, filterOptions);
+        const matched = isFiltered(node, mapSearch, settings.colorBy, filterOptions);
         const dim = !matched || isFlowDim(node);
         const selected = selectedSet.has(node.id);
         const hovered = node.id === hoveredId;
@@ -1989,8 +2059,8 @@ function GraphCanvas({
         const email = assigneeEmail(node);
         const photo = email ? photosRef.current.get(email) : undefined;
         const fill = email ? personStyle(email).color : NODE_FILL;
-        ctx.beginPath();
-        ctx.arc(x, y, r + 3.2 / globalScale, 0, Math.PI * 2);
+        const cls = nodeClassFromSize(node.size);
+        traceNodeClassPath(ctx, x, y, r + 3.2 / globalScale, cls);
         ctx.fillStyle = withAlpha(fill, hovered || selected ? 0.28 : 0.12);
         ctx.fill();
         paintNodeDisc(ctx, {
@@ -2000,6 +2070,7 @@ function GraphCanvas({
           fill,
           border,
           globalScale,
+          cls,
           selected,
           hovered,
           photo,
@@ -2008,15 +2079,13 @@ function GraphCanvas({
           unrotate,
         });
         if (selected || connecting) {
-          ctx.beginPath();
-          ctx.arc(x, y, r + 2.2 / globalScale, 0, Math.PI * 2);
+          traceNodeClassPath(ctx, x, y, r + 2.2 / globalScale, cls);
           ctx.strokeStyle = connecting ? palette.connectRing : palette.ring;
           ctx.lineWidth = 1.2 / globalScale;
           ctx.stroke();
         }
         if (connectArmed && hovered && !connecting) {
-          ctx.beginPath();
-          ctx.arc(x, y, r + 4.5 / globalScale, 0, Math.PI * 2);
+          traceNodeClassPath(ctx, x, y, r + 4.5 / globalScale, cls);
           ctx.strokeStyle = palette.connectRing;
           ctx.lineWidth = 2.4 / globalScale;
           ctx.setLineDash([4 / globalScale, 3 / globalScale]);
@@ -2205,6 +2274,7 @@ function GraphCanvas({
           const src = placeFrom ? graphData.nodes.find((n) => n.id === placeFrom) : null;
           const ghostLevel = src ? src.level + 1 : 2;
           const ghostSize = placeSize ?? sizeForLevel(ghostLevel);
+          const ghostClass = nodeClassFromSize(ghostSize);
           const nodeScale = viewScale(settings.enlarge);
           const r = dotRadius({ size: ghostSize, level: ghostLevel } as GraphNode, globalScale, nodeScale);
           ctx.save();
@@ -2219,8 +2289,7 @@ function GraphCanvas({
             ctx.setLineDash([]);
           }
           ctx.globalAlpha = 0.55;
-          ctx.beginPath();
-          ctx.arc(cur.x, cur.y, r + 3 / globalScale, 0, Math.PI * 2);
+          traceNodeClassPath(ctx, cur.x, cur.y, r + 3 / globalScale, ghostClass);
           ctx.fillStyle = withAlpha(NODE_FILL, 0.22);
           ctx.fill();
           paintNodeDisc(ctx, {
@@ -2230,6 +2299,7 @@ function GraphCanvas({
             fill: NODE_FILL,
             border: STATUS_COLORS.incomplete,
             globalScale,
+            cls: ghostClass,
             unassigned: true,
             unrotate: labelUnrotate(),
           });

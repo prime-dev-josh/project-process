@@ -17,13 +17,13 @@ export const VIEW_SETTING_KEYS = [
   "cardScale",
 ] as const;
 
-/** Five discrete force steps (Advanced sliders); wider range than the old 1–3 buttons. */
+/** Five discrete force steps (Advanced sliders). */
 export const FORCE_LEVELS = 5;
 
 export const FORCE_INTENSITY = {
-  charge: [-35, -90, -150, -230, -320],
-  linkDistance: [0, 45, 90, 140, 200],
-  collide: [0, 6, 12, 20, 30],
+  charge: [-80, -220, -450, -800, -1400],
+  linkDistance: [50, 160, 320, 560, 900],
+  collide: [8, 28, 60, 110, 180],
 } as const;
 
 export function nearestForceLevel(values: readonly number[], value: number): number {

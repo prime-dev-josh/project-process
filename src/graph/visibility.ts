@@ -64,3 +64,39 @@ export function isFiltered(
   }
   return true;
 }
+
+export type GraphFilterOptions = {
+  statusFilters?: WorkflowStatus[];
+  employeeEmail?: string | null;
+  groupIds?: string[];
+};
+
+export function hasActiveFilters(
+  query: string,
+  options?: GraphFilterOptions,
+) {
+  return Boolean(
+    query.trim() ||
+      (options?.statusFilters?.length ?? 0) > 0 ||
+      options?.employeeEmail != null ||
+      (options?.groupIds?.length ?? 0) > 0,
+  );
+}
+
+/** Matching nodes and links only — physics and reveal treat this as a standalone map. */
+export function filterGraph(
+  nodes: GraphNode[],
+  links: GraphLink[],
+  query: string,
+  colorBy: ColorBy,
+  options?: GraphFilterOptions,
+) {
+  if (!hasActiveFilters(query, options)) return { nodes, links };
+  const mapNodes = nodes.filter((node) => isFiltered(node, query, colorBy, options));
+  const ids = new Set(mapNodes.map((node) => node.id));
+  const mapLinks = links.filter((link) => {
+    const e = linkEnds(link);
+    return ids.has(e.source) && ids.has(e.target);
+  });
+  return { nodes: mapNodes, links: mapLinks };
+}

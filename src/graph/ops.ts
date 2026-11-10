@@ -1,4 +1,4 @@
-import { sizeForLevel } from "./colors";
+import { sizeFromNodeClass } from "./nodeClass";
 import { descendantsOf, linkEnds } from "./visibility";
 import { graphLinkSchema, graphNodeSchema } from "../schema/graph";
 import { newId } from "../storage";
@@ -17,7 +17,7 @@ export function blankNode(partial: Partial<GraphNode> & { title?: string }): Gra
     employee: partial.employee ?? "",
     employeeEmail: partial.employeeEmail ?? "",
     groupId: partial.groupId ?? null,
-    size: partial.size ?? sizeForLevel(level),
+    size: partial.size ?? sizeFromNodeClass("general"),
     x: partial.x,
     y: partial.y,
   });

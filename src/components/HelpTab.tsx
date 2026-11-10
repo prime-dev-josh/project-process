@@ -215,9 +215,9 @@ export default function HelpTab() {
       <section>
         <h3 className={cx(sideH2, "mb-1.5")}>Build the map</h3>
         <div className="grid grid-cols-2 gap-1.5">
-          <Card icon={<IcoAdd />} title="Add a node" body={<>Hover or click <Key>+</Key>, or press <Key>N</Key>.</>} />
+          <Card icon={<IcoAdd />} title="Add a node" body={<>Hover or click <Key>+</Key>, or press <Key>N</Key>. Pick Start, General, or End — play triangle, circle, or stop square.</>} />
           <Card icon={<IcoLink />} title="Add a link" body="From + or a node menu, pick an arrow type, then single-click two nodes anywhere on the ball. The target ring highlights as you hover." />
-          <Card icon={<IcoEdit />} title="Edit a node" body="Click a ball — the left panel opens. Status, person, group, and size save instantly; Title and Description save with Enter / Ctrl+Enter or the check button." />
+          <Card icon={<IcoEdit />} title="Edit a node" body="Click a ball — the left panel opens. Status, person, group, and class (Start play triangle, General circle, End stop square) save instantly; Title and Description save with Enter / Ctrl+Enter or the check button." />
           <Card icon={<IcoAdd />} title="Child nodes" body="Adding from a node's menu links the new node with a one-way arrow from the original and copies that node's group and assignee." />
           <Card icon={<IcoLink />} title="Edit a link" body="Right-click a connection to flip, change arrows, insert, or delete." />
           <Card icon={<IcoSelect />} title="Name a group" body="Lasso or Shift-click two or more nodes, then use the popup dropdown to assign an existing group, create a new one, or set None. Modify Node uses the same control for a single node. Each group keeps a hex color — right-click a group badge in the filter panel to edit name and color, or use the group picker on nodes. A colored membrane wraps the members, with the group name on the rim." />
@@ -235,7 +235,7 @@ export default function HelpTab() {
           <Card
             icon={<IcoFilter />}
             title="Search & filter"
-            body="Search titles, tap status pills, or click faces and group badges in the People and Groups grids (percent done on each badge). Groups multi-select, including Ungrouped. Click People or Groups headings to expand or collapse each grid. If nothing matches, the filter panel says so. Clear filters resets everything; Fit reframes matches."
+            body="Search titles, tap status pills, or click faces and group badges in the People and Groups grids (percent done on each badge). Groups multi-select, including Ungrouped. Click People or Groups headings to expand or collapse each grid. Each filter change rebuilds a new map of the matches — same intro animation, physics only among visible nodes — while the filter panel stays on screen. If nothing matches, the panel says so. Clear filters resets everything; Fit reframes matches."
           />
           <Card icon={<IcoStatus />} title="Status" body="Incomplete (red), in progress / WIP (gold), and done (green) — shown as the ring on each ball and in the filter pills." />
           <Card icon={<IcoPeople />} title="Assign people" body="Open the assignee dropdown on a node or multi-select panel. The closed row shows the current person; search to pick someone else or Unassigned. Assigned nodes use that person's Entra photo when Graph can reach it." />
