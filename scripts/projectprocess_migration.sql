@@ -87,6 +87,8 @@ CREATE TABLE projectprocess.[Group] (
     id nvarchar(160) NOT NULL CONSTRAINT PK_projectprocess_Group PRIMARY KEY,
     title nvarchar(400) NOT NULL,
     color nvarchar(32) NULL,
+    parent_id nvarchar(160) NULL,
+    sort_order int NOT NULL CONSTRAINT DF_projectprocess_Group_sort DEFAULT (0),
     version int NOT NULL CONSTRAINT DF_projectprocess_Group_ver DEFAULT (1),
     is_deleted bit NOT NULL CONSTRAINT DF_projectprocess_Group_del DEFAULT (0),
     updated_rev bigint NOT NULL CONSTRAINT DF_projectprocess_Group_rev DEFAULT (0),
@@ -106,4 +108,11 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_projectprocess_Group_
 GO
 IF COL_LENGTH(N'projectprocess.Group', N'color') IS NULL
     ALTER TABLE projectprocess.[Group] ADD color nvarchar(32) NULL;
+GO
+IF COL_LENGTH(N'projectprocess.Group', N'parent_id') IS NULL
+    ALTER TABLE projectprocess.[Group] ADD parent_id nvarchar(160) NULL;
+GO
+IF COL_LENGTH(N'projectprocess.Group', N'sort_order') IS NULL
+    ALTER TABLE projectprocess.[Group] ADD sort_order int NOT NULL
+        CONSTRAINT DF_projectprocess_Group_sort DEFAULT (0);
 GO

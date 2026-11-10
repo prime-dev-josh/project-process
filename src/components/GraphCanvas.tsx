@@ -611,6 +611,8 @@ function GraphCanvas({
     if (!initReveal) bootOverlayRef.current = false;
   }, [initReveal]);
 
+  useEffect(() => () => onRevealActiveRef.current?.(false), []);
+
   useEffect(() => {
     const order = revealOrder(mapNodes, mapLinks);
     orderRef.current = order;

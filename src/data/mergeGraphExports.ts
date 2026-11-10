@@ -56,7 +56,11 @@ function remapWithPrefix(doc: GraphDocument, prefix: string): GraphDocument {
   const remapId = (id: string | null | undefined) => (id ? `${prefix}${id}` : null);
   return {
     settings: doc.settings,
-    groups: doc.groups.map((group) => ({ ...group, id: `${prefix}${group.id}` })),
+    groups: doc.groups.map((group) => ({
+      ...group,
+      id: `${prefix}${group.id}`,
+      parentId: group.parentId ? `${prefix}${group.parentId}` : null,
+    })),
     nodes: doc.nodes.map((node) =>
       graphNodeSchema.parse({
         ...node,

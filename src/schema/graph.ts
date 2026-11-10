@@ -27,11 +27,40 @@ export const graphNodeSchema = z.object({
   fy: optionalNumber,
 });
 
-export const graphGroupSchema = z.object({
-  id: z.string().min(1).default(() => crypto.randomUUID()),
-  title: z.string().default("Untitled group"),
-  color: z.string().optional(),
-});
+function groupParentId(raw: Record<string, unknown>, id: string) {
+  const parent = raw.parentId ?? raw.parent_id;
+  if (parent == null || parent === "") return null;
+  const next = String(parent).trim();
+  if (!next || next === "null" || next === "undefined" || next === id) return null;
+  return next;
+}
+
+export function asGroupRecord(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const id = raw.id == null ? "" : String(raw.id).trim();
+  if (!id) return null;
+  const sort = Number(raw.sortOrder ?? raw.sort_order ?? 0);
+  const color = raw.color == null || raw.color === "" ? undefined : String(raw.color);
+  return {
+    id,
+    title: String(raw.title ?? "").trim() || "Untitled group",
+    ...(color ? { color } : {}),
+    parentId: groupParentId(raw, id),
+    sortOrder: Number.isFinite(sort) ? sort : 0,
+  };
+}
+
+export const graphGroupSchema = z.preprocess(
+  (value) => asGroupRecord(value) ?? value,
+  z.object({
+    id: z.string().min(1),
+    title: z.string().default("Untitled group"),
+    color: z.string().optional(),
+    parentId: z.union([z.string(), z.null()]).default(null),
+    sortOrder: z.number().default(0),
+  }),
+);
 
 const linkEndSchema = z
   .union([z.string(), z.object({ id: z.string() })])
@@ -112,7 +141,13 @@ export type ArrowStyle = z.infer<typeof arrowStyleSchema>;
 export type LinkKind = z.infer<typeof linkKindSchema>;
 export type GraphNode = z.infer<typeof graphNodeSchema>;
 export type GraphLink = z.infer<typeof graphLinkSchema>;
-export type GraphGroup = z.infer<typeof graphGroupSchema>;
+export type GraphGroup = {
+  id: string;
+  title: string;
+  color?: string;
+  parentId: string | null;
+  sortOrder: number;
+};
 export type GraphSettings = z.infer<typeof graphSettingsSchema>;
 export type GraphDocument = z.infer<typeof graphDocumentSchema>;
 
@@ -131,7 +166,9 @@ export function parseGraphDocument(data: unknown): GraphDocument {
     }),
     groups: (raw.groups ?? []).flatMap((group) => {
       const parsed = graphGroupSchema.safeParse(group);
-      return parsed.success ? [parsed.data] : [];
+      if (parsed.success) return [parsed.data];
+      const loose = asGroupRecord(group);
+      return loose ? [loose] : [];
     }),
     settings: graphSettingsSchema.parse(raw.settings ?? {}),
   };

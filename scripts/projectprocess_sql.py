@@ -184,6 +184,9 @@ IF OBJECT_ID(N'{SCHEMA}.Group', N'U') IS NULL
 CREATE TABLE {SCHEMA}.[Group] (
     id nvarchar(160) NOT NULL CONSTRAINT PK_projectprocess_Group PRIMARY KEY,
     title nvarchar(400) NOT NULL,
+    color nvarchar(32) NULL,
+    parent_id nvarchar(160) NULL,
+    sort_order int NOT NULL CONSTRAINT DF_projectprocess_Group_sort DEFAULT (0),
     version int NOT NULL CONSTRAINT DF_projectprocess_Group_ver DEFAULT (1),
     is_deleted bit NOT NULL CONSTRAINT DF_projectprocess_Group_del DEFAULT (0),
     updated_rev bigint NOT NULL CONSTRAINT DF_projectprocess_Group_rev DEFAULT (0),
@@ -191,6 +194,16 @@ CREATE TABLE {SCHEMA}.[Group] (
     updated_at datetime2 NOT NULL,
     updated_by nvarchar(200) NULL
 );""",
+    f"""
+IF COL_LENGTH(N'{SCHEMA}.Group', N'color') IS NULL
+    ALTER TABLE {SCHEMA}.[Group] ADD color nvarchar(32) NULL;""",
+    f"""
+IF COL_LENGTH(N'{SCHEMA}.Group', N'parent_id') IS NULL
+    ALTER TABLE {SCHEMA}.[Group] ADD parent_id nvarchar(160) NULL;""",
+    f"""
+IF COL_LENGTH(N'{SCHEMA}.Group', N'sort_order') IS NULL
+    ALTER TABLE {SCHEMA}.[Group] ADD sort_order int NOT NULL
+        CONSTRAINT DF_projectprocess_Group_sort DEFAULT (0);""",
     # Upgrades for databases created by earlier versions of the app.
     _add_column("Node", "updated_rev", "bigint NOT NULL CONSTRAINT DF_projectprocess_Node_rev DEFAULT (0)"),
     _add_column("Node", "updated_client", "nvarchar(64) NULL"),

@@ -118,6 +118,8 @@ function groupJson(group: GraphGroup) {
     id: group.id.slice(0, 160),
     title: (group.title || "Untitled group").slice(0, 400),
     color: group.color ? group.color.slice(0, 32) : null,
+    parentId: group.parentId ? String(group.parentId).slice(0, 160) : null,
+    sortOrder: Number.isFinite(group.sortOrder) ? Math.trunc(group.sortOrder) : 0,
   };
 }
 
@@ -151,10 +153,17 @@ function rowNode(row: Row): GraphNode {
 }
 
 function rowGroup(row: Row): GraphGroup {
+  const id = String(row.id);
+  const parentRaw = "parent_id" in row ? row.parent_id : row.parentId;
+  const parent = parentRaw == null || parentRaw === "" ? null : String(parentRaw).trim();
+  const sortRaw = row.sort_order ?? row.sortOrder ?? 0;
+  const sortOrder = Number(sortRaw);
   return {
-    id: String(row.id),
+    id,
     title: String(row.title ?? "Untitled group"),
     color: row.color == null || row.color === "" ? undefined : String(row.color),
+    parentId: !parent || parent === "null" || parent === id ? null : parent,
+    sortOrder: Number.isFinite(sortOrder) ? sortOrder : 0,
   };
 }
 
@@ -233,11 +242,33 @@ function isMissingGroupTable(err: unknown) {
   return anyErr?.number === 208 || /Invalid object name.*Group/i.test(String(anyErr?.message ?? err ?? ""));
 }
 
-async function queryGroupRows(req: SqlRequest, text: string) {
+function isMissingGroupColumn(err: unknown) {
+  const anyErr = err as { number?: number; message?: string };
+  const message = String(anyErr?.message ?? err ?? "");
+  return anyErr?.number === 207 || /Invalid column name/i.test(message);
+}
+
+async function queryGroupRows(
+  req: SqlRequest,
+  whereSql: string,
+  top?: number,
+  options?: { includeDeleted?: boolean },
+) {
+  const prefix = top ? `SELECT TOP (${top})` : "SELECT";
+  const trimmed = whereSql.trim();
+  const clause =
+    options?.includeDeleted === true
+      ? trimmed
+      : trimmed
+        ? `${trimmed} AND is_deleted = 0`
+        : "WHERE is_deleted = 0";
   try {
-    return await req.query(text);
+    return await req.query(`${prefix} * FROM ${GROUP} ${clause}`);
   } catch (err) {
-    if (isMissingGroupTable(err)) return { recordset: [] as Row[] };
+    if (isMissingGroupTable(err)) {
+      console.error("[mapStore] Group table missing; returning no groups", err);
+      return { recordset: [] as Row[] };
+    }
     throw err;
   }
 }
@@ -328,26 +359,56 @@ async function upsertGroups(tx: SqlTransaction, groups: GraphGroup[], stamp: Sta
   if (!groups.length) return {};
   const req = stampInputs(tx.request(), stamp);
   req.input("rows", sql.NVarChar(sql.MAX), JSON.stringify(groups.map(groupJson)));
-  const result = await req.query(`
-    MERGE ${GROUP} WITH (HOLDLOCK) AS t
-    USING (
-      SELECT * FROM OPENJSON(@rows) WITH (
-        id nvarchar(160) '$.id',
-        title nvarchar(400) '$.title',
-        color nvarchar(32) '$.color'
+  try {
+    const result = await req.query(`
+      MERGE ${GROUP} WITH (HOLDLOCK) AS t
+      USING (
+        SELECT * FROM OPENJSON(@rows) WITH (
+          id nvarchar(160) '$.id',
+          title nvarchar(400) '$.title',
+          color nvarchar(32) '$.color',
+          parent_id nvarchar(160) '$.parentId',
+          sort_order int '$.sortOrder'
+        )
+      ) AS s ON t.id = s.id
+      WHEN MATCHED THEN UPDATE SET
+        title = s.title, color = s.color, parent_id = s.parent_id, sort_order = s.sort_order,
+        version = t.version + 1, is_deleted = 0,
+        updated_rev = @rev, updated_client = @client, updated_at = @updated_at, updated_by = @updated_by
+      WHEN NOT MATCHED THEN INSERT (
+        id, title, color, parent_id, sort_order, version, is_deleted, updated_rev, updated_client, updated_at, updated_by
+      ) VALUES (
+        s.id, s.title, s.color, s.parent_id, s.sort_order, 1, 0, @rev, @client, @updated_at, @updated_by
       )
-    ) AS s ON t.id = s.id
-    WHEN MATCHED THEN UPDATE SET
-      title = s.title, color = s.color, version = t.version + 1, is_deleted = 0,
-      updated_rev = @rev, updated_client = @client, updated_at = @updated_at, updated_by = @updated_by
-    WHEN NOT MATCHED THEN INSERT (
-      id, title, color, version, is_deleted, updated_rev, updated_client, updated_at, updated_by
-    ) VALUES (
-      s.id, s.title, s.color, 1, 0, @rev, @client, @updated_at, @updated_by
-    )
-    OUTPUT INSERTED.id, INSERTED.version;
-  `);
-  return versionsFrom(result.recordset);
+      OUTPUT INSERTED.id, INSERTED.version;
+    `);
+    return versionsFrom(result.recordset);
+  } catch (err) {
+    if (!isMissingGroupColumn(err)) throw err;
+    const legacy = stampInputs(tx.request(), stamp);
+    legacy.input("rows", sql.NVarChar(sql.MAX), JSON.stringify(groups.map(groupJson)));
+    const result = await legacy.query(`
+      MERGE ${GROUP} WITH (HOLDLOCK) AS t
+      USING (
+        SELECT * FROM OPENJSON(@rows) WITH (
+          id nvarchar(160) '$.id',
+          title nvarchar(400) '$.title',
+          color nvarchar(32) '$.color'
+        )
+      ) AS s ON t.id = s.id
+      WHEN MATCHED THEN UPDATE SET
+        title = s.title, color = s.color,
+        version = t.version + 1, is_deleted = 0,
+        updated_rev = @rev, updated_client = @client, updated_at = @updated_at, updated_by = @updated_by
+      WHEN NOT MATCHED THEN INSERT (
+        id, title, color, version, is_deleted, updated_rev, updated_client, updated_at, updated_by
+      ) VALUES (
+        s.id, s.title, s.color, 1, 0, @rev, @client, @updated_at, @updated_by
+      )
+      OUTPUT INSERTED.id, INSERTED.version;
+    `);
+    return versionsFrom(result.recordset);
+  }
 }
 
 async function softDelete(tx: SqlTransaction, table: "Node" | "Link" | "Group", ids: string[], stamp: Stamp): Promise<VersionMap> {
@@ -364,28 +425,6 @@ async function softDelete(tx: SqlTransaction, table: "Node" | "Link" | "Group", 
     WHERE t.is_deleted = 0
   `);
   return versionsFrom(result.recordset);
-}
-
-async function sweepEmptyGroups(tx: SqlTransaction, stamp: Stamp): Promise<VersionMap> {
-  const req = stampInputs(tx.request(), stamp);
-  try {
-    const result = await req.query(`
-      UPDATE g SET
-        is_deleted = 1, version = g.version + 1,
-        updated_rev = @rev, updated_client = @client, updated_at = @updated_at, updated_by = @updated_by
-      OUTPUT INSERTED.id, INSERTED.version
-      FROM ${GROUP} AS g
-      WHERE g.is_deleted = 0
-        AND NOT EXISTS (
-          SELECT 1 FROM ${S}.Node AS n
-          WHERE n.group_id = g.id AND n.is_deleted = 0
-        )
-    `);
-    return versionsFrom(result.recordset);
-  } catch (err) {
-    if (isMissingGroupTable(err)) return {};
-    throw err;
-  }
 }
 
 async function movePositions(tx: SqlTransaction, positions: NodePosition[], stamp: Stamp) {
@@ -425,21 +464,32 @@ export async function loadSharedMap(): Promise<SharedMap> {
     pool.request().query(`SELECT revision FROM ${S}.Map WHERE id = 1`),
     pool.request().query(`SELECT * FROM ${S}.Node WHERE is_deleted = 0`),
     pool.request().query(`SELECT * FROM ${S}.Link WHERE is_deleted = 0`),
-    queryGroupRows(pool.request(), `SELECT * FROM ${GROUP} WHERE is_deleted = 0`),
+    queryGroupRows(pool.request(), ""),
   ]);
-  const doc = parseGraphDocument({
-    nodes: nodes.recordset.map(rowNode),
-    links: links.recordset.map(rowLink),
-    groups: groups.recordset.map(rowGroup),
-  });
+  const mappedGroups: GraphGroup[] = groups.recordset.map(rowGroup);
+  const mappedNodes: GraphNode[] = nodes.recordset.map(rowNode);
+  const mappedLinks: GraphLink[] = links.recordset.map(rowLink);
+  let parsedNodes: GraphNode[] = mappedNodes;
+  let parsedLinks: GraphLink[] = mappedLinks;
+  try {
+    const doc = parseGraphDocument({
+      nodes: mappedNodes,
+      links: mappedLinks,
+      groups: mappedGroups,
+    });
+    parsedNodes = doc.nodes;
+    parsedLinks = doc.links;
+  } catch (err) {
+    console.error("[mapStore] parseGraphDocument failed; returning mapped rows", err);
+  }
   const nodeVersions = versionsFrom(nodes.recordset);
   const linkVersions = versionsFrom(links.recordset);
   const groupVersions = versionsFrom(groups.recordset);
   return {
     revision: Number(map.recordset[0]?.revision ?? 0),
-    nodes: doc.nodes.map((n) => ({ ...n, version: nodeVersions[n.id] ?? 1 })),
-    links: doc.links.map((l) => ({ ...l, version: linkVersions[l.id] ?? 1 })),
-    groups: doc.groups.map((g) => ({ ...g, version: groupVersions[g.id] ?? 1 })),
+    nodes: parsedNodes.map((n) => ({ ...n, version: nodeVersions[n.id] ?? 1 })),
+    links: parsedLinks.map((l) => ({ ...l, version: linkVersions[l.id] ?? 1 })),
+    groups: mappedGroups.map((g) => ({ ...g, version: groupVersions[g.id] ?? 1 })),
   };
 }
 
@@ -462,7 +512,7 @@ export async function loadMapDelta(since: number): Promise<MapDelta | null> {
   const [nodes, links, groups, log] = await Promise.all([
     withSince().query(`SELECT TOP (${DELTA_ROW_LIMIT + 1}) * FROM ${S}.Node WHERE updated_rev > @since`),
     withSince().query(`SELECT TOP (${DELTA_ROW_LIMIT + 1}) * FROM ${S}.Link WHERE updated_rev > @since`),
-    queryGroupRows(withSince(), `SELECT TOP (${DELTA_ROW_LIMIT + 1}) * FROM ${GROUP} WHERE updated_rev > @since`),
+    queryGroupRows(withSince(), `WHERE updated_rev > @since`, DELTA_ROW_LIMIT + 1, { includeDeleted: true }),
     withSince().query(`
       SELECT TOP (${DELTA_LOG_LIMIT}) revision, changed_at, changed_by, action, payload_json
       FROM ${S}.ChangeLog WHERE revision > @since ORDER BY revision
@@ -587,9 +637,8 @@ export async function applyMapTx(input: MapTxInput): Promise<MapTxResult> {
       ...(await softDelete(tx, "Link", delLinkIds, stamp)),
     };
     const groups = {
-      ...(await upsertGroups(tx, upGroups, stamp)),
-      ...(await softDelete(tx, "Group", delGroupIds, stamp)),
-      ...(await sweepEmptyGroups(tx, stamp)),
+      ...(upGroups.length ? await upsertGroups(tx, upGroups, stamp) : {}),
+      ...(delGroupIds.length ? await softDelete(tx, "Group", delGroupIds, stamp) : {}),
     };
     await movePositions(tx, positions, stamp);
 

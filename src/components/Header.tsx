@@ -1,15 +1,18 @@
 import { cx, headerBtn } from "../styles";
+import ExportMenu, { type ExportKind } from "./ExportMenu";
 
 type Props = {
   nodeCount: number;
   linkCount: number;
+  canvasView: "map" | "groups";
+  onCanvasView: (view: "map" | "groups") => void;
   liveStatus: "offline" | "live" | "syncing";
   historyCount: number;
   historyOpen: boolean;
   infoOpen: boolean;
   theme: "light" | "dark";
   onTheme: (theme: "light" | "dark") => void;
-  onExport: () => void;
+  onExport: (kind: ExportKind) => void;
   onImport: () => void;
   onHistory: () => void;
   canUndo: boolean;
@@ -22,6 +25,8 @@ type Props = {
 export default function Header({
   nodeCount,
   linkCount,
+  canvasView,
+  onCanvasView,
   liveStatus,
   historyCount,
   historyOpen,
@@ -51,10 +56,23 @@ export default function Header({
         <span className="whitespace-nowrap text-[0.8rem] font-bold tracking-wide text-[var(--omp-on-header)]">
           {nodeCount} nodes · {linkCount} links
         </span>
+        <div className="inline-flex overflow-hidden rounded-lg border border-white/35" role="group" aria-label="Canvas view">
+          {(["map", "groups"] as const).map((id) => (
+            <button
+              key={id}
+              type="button"
+              className={cx(headerBtn, "rounded-none border-0", canvasView === id && "bg-[var(--header-btn-hover)]")}
+              aria-pressed={canvasView === id}
+              onClick={() => onCanvasView(id)}
+            >
+              {id === "map" ? "Map" : "Groups"}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="flex flex-wrap items-center justify-end gap-2">
         <button type="button" className={headerBtn} onClick={onImport}>Import</button>
-        <button type="button" className={headerBtn} onClick={onExport}>Export</button>
+        <ExportMenu onExport={onExport} />
         <button
           type="button"
           className={cx(headerBtn, "inline-flex items-center gap-1.5", historyOpen && "bg-[var(--header-btn-hover)]")}

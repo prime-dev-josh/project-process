@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@tanstack/react-store";
 import DraftPrompt from "./components/DraftPrompt";
+import GroupDeleteModal from "./components/GroupDeleteModal";
 import EditLinkPanel from "./components/EditLinkPanel";
 import { type NodeEditPreview } from "./components/EditNodePanel";
+import GroupTreeCanvas from "./components/GroupTreeCanvas";
+import GroupTreeInspector from "./components/GroupTreeInspector";
 import LeftSidePanel from "./components/LeftSidePanel";
 import PlusMenu from "./components/PlusMenu";
 import PlusMenuButton from "./components/PlusMenuButton";
 import ViewCompass from "./components/ViewCompass";
 import GraphCanvas, { type GraphHandle, type LassoMode } from "./components/GraphCanvas";
 import Header from "./components/Header";
+import type { ExportKind } from "./components/ExportMenu";
 import HistoryPanel from "./components/HistoryPanel";
 import InfoPanel from "./components/InfoPanel";
 import LinkContextMenu from "./components/LinkContextMenu";
@@ -18,13 +22,29 @@ import SelectionPanel from "./components/SelectionPanel";
 import SyncChangesFeed from "./components/SyncChangesFeed";
 import { nodeColor } from "./graph/colors";
 import type { WorkflowStatus } from "./graph/workflowStatus";
-import { UNGROUPED_FILTER, groupTitle, nextGroupColor, normalizeGroupColor, pruneEmptyGroups } from "./graph/groups";
+import {
+  addChildGroup,
+  canAssignGroup,
+  childrenOf,
+  deleteGroup,
+  groupDeleteImpact,
+  type GroupDeleteImpact,
+  isLeaf,
+  leafGroups,
+  reorderSiblings,
+  reparentGroup,
+} from "./graph/groupTree";
+import { UNGROUPED_FILTER, groupTitle, nextGroupColor, normalizeGroupColor } from "./graph/groups";
 import { addChild, addLink, blankNode, deleteNode, insertNodeBetween } from "./graph/ops";
 import { GRAPH_MAX_ZOOM, GRAPH_MIN_ZOOM, mergeViewSettings } from "./graph/viewSettings";
 import { degToRad, rotatePoint, viewCoverOffset } from "./graph/viewRotation";
 import { directedFlowFrom } from "./graph/flow";
-import { isFiltered, linkEnds } from "./graph/visibility";
+import { isFiltered, linkEnds, visibleGroupIdsForTree } from "./graph/visibility";
+import { downloadTextFile } from "./export/csv";
+import { buildFullCsv } from "./export/mapExport";
+import { printDocumentationPdf, printFlowchartPdf } from "./export/print";
 import { useMapSync } from "./hooks/useMapSync";
+import { fetchMap } from "./lib/mapSync";
 import { selectionPanelPlacement } from "./lib/floatPanelPlacement";
 import { DEFAULT_SETTINGS } from "./schema/graph";
 import {
@@ -39,6 +59,7 @@ import {
 } from "./storage";
 import { discardDrafts, hasDrafts, saveDrafts } from "./store/drafts";
 import {
+  applyGroupsRefresh,
   commitGraph,
   graphStore,
   persistPositions,
@@ -49,7 +70,7 @@ import {
 } from "./store/graph";
 import { patchUi, showToast, toggleHistory, toggleInfo, uiStore } from "./store/ui";
 import { ctxBox, cx } from "./styles";
-import type { ArrowStyle, GraphGroup, GraphLink, GraphNode, GraphSettings } from "./types";
+import type { ArrowStyle, GraphLink, GraphNode, GraphSettings } from "./types";
 
 type MenuState =
   | { kind: "node"; id: string; x: number; y: number }
@@ -76,6 +97,8 @@ export default function App() {
   const infoOpen = useStore(uiStore, (s) => s.infoOpen);
   const toast = useStore(uiStore, (s) => s.toast);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [canvasView, setCanvasView] = useState<"map" | "groups">("map");
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
@@ -91,6 +114,9 @@ export default function App() {
   /** Session-only flow highlight; never written to map storage or SQL. */
   const [highlightOriginId, setHighlightOriginId] = useState<string | null>(null);
   const [draftPrompt, setDraftPrompt] = useState<{ proceed: () => void } | null>(null);
+  const [groupDelete, setGroupDelete] = useState<GroupDeleteImpact | null>(null);
+  const [groupsRefreshing, setGroupsRefreshing] = useState(false);
+  const groupsRefreshingRef = useRef(false);
   const hideFiltered =
     Boolean(search.trim()) || statusFilters.length > 0 || employeeFilter != null || groupFilters.length > 0;
   const [size, setSize] = useState({ w: 1200, h: 800 });
@@ -120,6 +146,15 @@ export default function App() {
   const [editVisual, setEditVisual] = useState<NodeEditPreview | null>(null);
 
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+  const treeFilterVisibleIds = useMemo(
+    () =>
+      visibleGroupIdsForTree(groups, nodes, search, settings.colorBy, {
+        statusFilters,
+        employeeEmail: employeeFilter,
+        groupIds: canvasView === "groups" ? [] : groupFilters,
+      }),
+    [groups, nodes, search, settings.colorBy, statusFilters, employeeFilter, groupFilters, canvasView],
+  );
   const highlightFlow = useMemo(() => {
     if (!highlightOriginId) return null;
     if (!nodeById.has(highlightOriginId)) return null;
@@ -235,10 +270,9 @@ export default function App() {
       if (cur.kind === "link" && !linkIds.has(cur.id)) return null;
       return cur;
     });
-    const groupIds = new Set(groups.map((g) => g.id));
-    setGroupFilters((prev) =>
-      prev.filter((id) => id === UNGROUPED_FILTER || groupIds.has(id)),
-    );
+    const leafIds = new Set(leafGroups(groups).map((group) => group.id));
+    setGroupFilters((prev) => prev.filter((id) => id === UNGROUPED_FILTER || leafIds.has(id)));
+    setSelectedGroupId((current) => (current && groups.some((group) => group.id === current) ? current : null));
   }, [nodeById, links, groups]);
 
   const dismissEditPanel = useCallback(() => {
@@ -321,7 +355,7 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
       if (e.key === "Escape") {
-        if (editLocked || draftPrompt) return;
+        if (editLocked || draftPrompt || groupDelete) return;
         if (connect || placing) {
           guardDraft(clearInteraction);
           return;
@@ -348,11 +382,15 @@ export default function App() {
         if (!editLocked) redo();
       }
       if (e.key === "Delete") {
-        if (editLocked || editingLinkId) return;
+        if (editLocked || editingLinkId || groupDelete) return;
+        if (canvasView === "groups") {
+          if (selectedGroupId) deleteGroupFromTree(selectedGroupId);
+          return;
+        }
         if (picked?.kind === "link") removeLink(picked.id);
         else if (selectedIds.length) removeNodes(selectedIds);
       }
-      if (e.key.toLowerCase() === "n" && !e.ctrlKey && !e.metaKey) {
+      if (canvasView === "map" && e.key.toLowerCase() === "n" && !e.ctrlKey && !e.metaKey) {
         startPlace();
       }
     };
@@ -417,6 +455,10 @@ export default function App() {
   }
 
   function updateNode(id: string, patch: Partial<GraphNode>) {
+    if (patch.groupId != null && !canAssignGroup(graphStore.state.groups, patch.groupId)) {
+      showToast("Only groups without children can hold nodes");
+      return;
+    }
     const current = graphStore.state.nodes.find((n) => n.id === id);
     if (!current) return;
     const name = current.title.trim() || "node";
@@ -434,27 +476,17 @@ export default function App() {
       label = groupName ? `Moved ${name} into ${groupName}` : `Ungrouped ${name}`;
     }
     const nextNodes = graphStore.state.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n));
-    commitGraph(
-      label,
-      {
-        nodes: nextNodes,
-        groups: patch.groupId !== undefined ? pruneEmptyGroups(nextNodes, graphStore.state.groups) : undefined,
-      },
-      `node:${id}:edit`,
-    );
+    commitGraph(label, { nodes: nextNodes }, `node:${id}:edit`);
   }
 
   function updateSelectedNodes(patch: Partial<GraphNode>, label: string) {
+    if (patch.groupId != null && !canAssignGroup(graphStore.state.groups, patch.groupId)) {
+      showToast("Only groups without children can hold nodes");
+      return;
+    }
     const ids = new Set(selectedIds);
     const nextNodes = graphStore.state.nodes.map((n) => (ids.has(n.id) ? { ...n, ...patch } : n));
-    commitGraph(
-      label,
-      {
-        nodes: nextNodes,
-        groups: patch.groupId !== undefined ? pruneEmptyGroups(nextNodes, graphStore.state.groups) : undefined,
-      },
-      `selection:${Object.keys(patch).sort().join(",")}`,
-    );
+    commitGraph(label, { nodes: nextNodes }, `selection:${Object.keys(patch).sort().join(",")}`);
   }
 
   function openNodeEditor(id: string) {
@@ -522,7 +554,7 @@ export default function App() {
     const next = deleteNode(current, currentLinks, id, branch);
     commitGraph(
       branch ? `Deleted branch of ${target?.title || "node"}` : `Deleted ${target?.title || "node"}`,
-      { nodes: next.nodes, links: next.links, groups: pruneEmptyGroups(next.nodes, graphStore.state.groups) },
+      { nodes: next.nodes, links: next.links },
     );
     setMenu(null);
   }
@@ -534,28 +566,140 @@ export default function App() {
       nextNodes = next.nodes;
       nextLinks = next.links;
     }
-    commitGraph(`Deleted ${ids.length} nodes`, {
-      nodes: nextNodes,
-      links: nextLinks,
-      groups: pruneEmptyGroups(nextNodes, graphStore.state.groups),
-    });
+    commitGraph(`Deleted ${ids.length} nodes`, { nodes: nextNodes, links: nextLinks });
     setSelectedIds([]);
     setPicked(null);
     setMenu(null);
   }
 
-  function createGroup(ids: string[], title: string) {
+  function showCanvas(next: "map" | "groups") {
+    if (next === "groups") {
+      setMapRevealing(false);
+      setPlacing(null);
+      setConnect(null);
+      setMenu(null);
+      setPlusOpen(false);
+      setPicked(null);
+      setSelectedIds([]);
+      setEditingId(null);
+      setEditingLinkId(null);
+    }
+    setCanvasView(next);
+  }
+
+  function addGroup(parentId: string | null) {
+    const currentGroups = graphStore.state.groups;
+    const currentNodes = graphStore.state.nodes;
+    if (parentId && !currentGroups.some((group) => group.id === parentId)) return;
     const id = newId();
-    const set = new Set(ids);
-    const nextNodes = graphStore.state.nodes.map((n) => (set.has(n.id) ? { ...n, groupId: id } : n));
-    const nextGroups: GraphGroup[] = [
-      ...graphStore.state.groups,
-      { id, title: groupTitle(title), color: nextGroupColor(graphStore.state.groups) },
-    ];
-    commitGraph(`Grouped ${ids.length} nodes`, {
-      nodes: nextNodes,
-      groups: pruneEmptyGroups(nextNodes, nextGroups),
+    const parent = parentId ? currentGroups.find((group) => group.id === parentId) : null;
+    const movedMembers = Boolean(
+      parentId && isLeaf(currentGroups, parentId) && currentNodes.some((node) => node.groupId === parentId),
+    );
+    const next = addChildGroup(currentGroups, currentNodes, parentId, {
+      id,
+      title: "New group",
+      color: nextGroupColor(currentGroups),
     });
+    const label = !parent
+      ? "Added group"
+      : movedMembers
+        ? `Moved nodes into a child of ${groupTitle(parent.title)}`
+        : `Added group under ${groupTitle(parent.title)}`;
+    commitGraph(label, next);
+    setSelectedGroupId(id);
+    setCanvasView("groups");
+  }
+
+  function applyGroupTreeDrop(
+    id: string,
+    drop: { kind: "child"; parentId: string } | { kind: "adopt"; childId: string } | { kind: "reorder"; parentId: string | null; beforeId: string | null } | { kind: "root" },
+  ) {
+    const currentGroups = graphStore.state.groups;
+    const currentNodes = graphStore.state.nodes;
+    const current = currentGroups.find((group) => group.id === id);
+    if (!current) return;
+
+    if (drop.kind === "adopt") {
+      if (drop.childId === id) return;
+      const moved = reparentGroup(currentGroups, currentNodes, drop.childId, id);
+      if (!moved) {
+        showToast("That move would put a group inside itself");
+        return;
+      }
+      const child = currentGroups.find((group) => group.id === drop.childId);
+      commitGraph(`Moved ${groupTitle(child?.title)} under ${groupTitle(current.title)}`, {
+        groups: moved.groups,
+        nodes: moved.nodes,
+      });
+      return;
+    }
+
+    const parentId = drop.kind === "root" ? null : drop.parentId;
+    const beforeId = drop.kind === "reorder" ? drop.beforeId : null;
+    let nextGroups = currentGroups;
+    let nextNodes = currentNodes;
+    if ((current.parentId ?? null) !== parentId) {
+      const moved = reparentGroup(nextGroups, nextNodes, id, parentId);
+      if (!moved) {
+        showToast("That move would put a group inside itself");
+        return;
+      }
+      nextGroups = moved.groups;
+      nextNodes = moved.nodes;
+    }
+    const sibs = childrenOf(nextGroups, parentId)
+      .map((group) => group.id)
+      .filter((groupId) => groupId !== id);
+    const index = beforeId == null ? sibs.length : sibs.indexOf(beforeId);
+    sibs.splice(index < 0 ? sibs.length : index, 0, id);
+    const reparented = (current.parentId ?? null) !== parentId;
+    const label = reparented ? "Moved group" : drop.kind === "reorder" ? "Reordered groups" : "Moved group";
+    commitGraph(label, {
+      groups: reorderSiblings(nextGroups, parentId, sibs),
+      nodes: nextNodes,
+    });
+  }
+
+  function deleteGroupFromTree(id: string) {
+    const currentGroups = graphStore.state.groups;
+    const currentNodes = graphStore.state.nodes;
+    const group = currentGroups.find((item) => item.id === id);
+    if (!group) return;
+    setGroupDelete(groupDeleteImpact(currentGroups, currentNodes, id));
+  }
+
+  function confirmDeleteGroup() {
+    const impact = groupDelete;
+    if (!impact) return;
+    const currentGroups = graphStore.state.groups;
+    const currentNodes = graphStore.state.nodes;
+    commitGraph(`Deleted ${impact.title}`, deleteGroup(currentGroups, currentNodes, impact.id));
+    setSelectedGroupId((current) => (current && impact.ids.includes(current) ? null : current));
+    setGroupDelete(null);
+  }
+
+  async function refreshGroupsTree() {
+    if (groupsRefreshingRef.current) return;
+    groupsRefreshingRef.current = true;
+    setGroupsRefreshing(true);
+    try {
+      const data = await fetchMap();
+      if (data.kind !== "full") {
+        showToast("Couldn't refresh groups");
+        return;
+      }
+      applyGroupsRefresh(data);
+      setSelectedGroupId((current) =>
+        current && graphStore.state.groups.some((group) => group.id === current) ? current : null,
+      );
+      showToast("Groups refreshed");
+    } catch {
+      showToast("Couldn't refresh groups");
+    } finally {
+      groupsRefreshingRef.current = false;
+      setGroupsRefreshing(false);
+    }
   }
 
   function updateGroup(groupId: string, patch: { title?: string; color?: string }) {
@@ -573,10 +717,7 @@ export default function App() {
   function ungroup(ids: string[]) {
     const set = new Set(ids);
     const nextNodes = graphStore.state.nodes.map((n) => (set.has(n.id) ? { ...n, groupId: null } : n));
-    commitGraph(`Ungrouped ${ids.length} nodes`, {
-      nodes: nextNodes,
-      groups: pruneEmptyGroups(nextNodes, graphStore.state.groups),
-    });
+    commitGraph(`Ungrouped ${ids.length} nodes`, { nodes: nextNodes });
   }
 
   function removeLink(id: string) {
@@ -896,13 +1037,30 @@ export default function App() {
       <Header
         nodeCount={nodes.length}
         linkCount={links.length}
+        canvasView={canvasView}
+        onCanvasView={showCanvas}
         liveStatus={liveStatus}
         historyCount={actions.length}
         historyOpen={historyOpen}
         infoOpen={infoOpen}
         theme={theme}
         onTheme={(next) => patchUi({ theme: next })}
-        onExport={() => {
+        onExport={(kind: ExportKind) => {
+          if (kind === "csv") {
+            downloadTextFile(buildFullCsv(nodes, links, groups), "project-process.csv");
+            showToast("Exported CSV");
+            return;
+          }
+          if (kind === "flowchart") {
+            printFlowchartPdf(nodes, links);
+            showToast("Opened flowchart print preview");
+            return;
+          }
+          if (kind === "docs") {
+            printDocumentationPdf(nodes, links, groups);
+            showToast("Opened documentation print preview");
+            return;
+          }
           downloadJson({ nodes, links, groups, settings });
           showToast("Exported JSON");
         }}
@@ -917,9 +1075,27 @@ export default function App() {
 
       <div className="flex min-h-0 min-w-0 flex-1">
         <div className="flex h-full shrink-0">
-          {!mapLoading ? (
+          {canvasView === "groups" || !mapLoading ? (
           <>
           <aside className="site-left-rail flex h-full w-[280px] shrink-0 flex-col border-r border-[var(--line)] bg-[var(--card)]">
+            {canvasView === "groups" ? (
+              <GroupTreeInspector
+                groups={groups}
+                nodes={nodes}
+                colorBy={settings.colorBy}
+                search={search}
+                statusFilters={statusFilters}
+                employeeFilter={employeeFilter}
+                groupFilters={groupFilters}
+                onSearch={setSearch}
+                onStatusFilters={setStatusFilters}
+                onEmployeeFilter={setEmployeeFilter}
+                onGroupFilters={setGroupFilters}
+                onClearFilters={clearFilters}
+                onAddRoot={() => addGroup(null)}
+                onUpdateGroup={updateGroup}
+              />
+            ) : (
             <LeftSidePanel
               search={search}
               statusFilters={statusFilters}
@@ -957,12 +1133,11 @@ export default function App() {
               onNodeSave={(patch) => {
                 if (editing) updateNode(editing.id, patch);
               }}
-              onCreateGroup={(title) => {
-                if (editing) createGroup([editing.id], title);
-              }}
               onUpdateGroup={updateGroup}
             />
+            )}
           </aside>
+          {canvasView === "map" ? (
           <div className="flex shrink-0 flex-col pt-2 pl-1.5">
             <PlusMenuButton
               open={plusOpen}
@@ -978,11 +1153,30 @@ export default function App() {
               onLink={(arrows) => startLink(arrows)}
             />
           </div>
+          ) : null}
           </>
           ) : null}
         </div>
 
         <div className="stage relative min-h-0 min-w-0 flex-1 overflow-hidden bg-[var(--graph-bg)]" ref={stageRef}>
+        {canvasView === "groups" ? (
+          <GroupTreeCanvas
+            groups={groups}
+            nodes={nodes}
+            onSelect={setSelectedGroupId}
+            onPlace={applyGroupTreeDrop}
+            onInvalid={() => showToast("That move would put a group inside itself")}
+            onAddRoot={() => addGroup(null)}
+            onRename={(id, title) => updateGroup(id, { title })}
+            onColor={(id, color) => updateGroup(id, { color })}
+            onAddChild={(parentId) => addGroup(parentId)}
+            onDelete={deleteGroupFromTree}
+            onRefresh={refreshGroupsTree}
+            refreshing={groupsRefreshing}
+            filterVisibleIds={treeFilterVisibleIds}
+          />
+        ) : (
+        <>
         <div
           className="graph-wrap absolute inset-0 overflow-hidden"
           onContextMenu={(e) => e.preventDefault()}
@@ -1134,10 +1328,12 @@ export default function App() {
           </div>
         )}
 
+        </>
+        )}
       </div>
       </div>
 
-      {selectedIds.length > 1 && !menu && !editingLink && !connect && !placing && !nodesMoving && (
+      {canvasView === "map" && selectedIds.length > 1 && !menu && !editingLink && !connect && !placing && !nodesMoving && (
         <SelectionPanel
           key={selectedIds.join("|")}
           nodes={nodes.filter((n) => selectedIds.includes(n.id))}
@@ -1163,12 +1359,11 @@ export default function App() {
             const groupName = groupTitle(graphStore.state.groups.find((g) => g.id === groupId)?.title);
             updateSelectedNodes({ groupId }, `Moved ${selectedIds.length} nodes into ${groupName}`);
           }}
-          onCreateGroup={(title) => createGroup(selectedIds, title)}
           onUpdateGroup={updateGroup}
         />
       )}
 
-      {menu?.kind === "node" && (() => {
+      {canvasView === "map" && menu?.kind === "node" && (() => {
         const ctxNode = nodeById.get(menu.id);
         if (!ctxNode) return null;
         return (
@@ -1189,7 +1384,7 @@ export default function App() {
         );
       })()}
 
-      {menu?.kind === "link" && (() => {
+      {canvasView === "map" && menu?.kind === "link" && (() => {
         const ctxLink = links.find((l) => l.id === menu.id);
         if (!ctxLink) return null;
         return (
@@ -1208,7 +1403,7 @@ export default function App() {
         );
       })()}
 
-      {menu?.kind === "canvas" && (
+      {canvasView === "map" && menu?.kind === "canvas" && (
         <div className={cx("plus-menu plus-menu-floating ctx", ctxBox, "w-[196px] min-w-0 rounded-lg p-1")} style={{ left: menu.x, top: menu.y }}>
           <PlusMenu
             onAddNode={(size) => startPlace(undefined, size)}
@@ -1229,7 +1424,7 @@ export default function App() {
         />
       )}
 
-      {previewNode && (
+      {canvasView === "map" && previewNode && (
         <NodePreviewPanel
           node={previewNode}
           colorBy={settings.colorBy}
@@ -1244,7 +1439,7 @@ export default function App() {
         />
       )}
 
-      {editingLink && (
+      {canvasView === "map" && editingLink && (
         <EditLinkPanel
           key={editingLink.id}
           link={editingLink}
@@ -1266,12 +1461,14 @@ export default function App() {
         onJumpNode={focusNode}
         onJumpLink={focusLink}
         onJumpGroup={(id) => {
-          const member = graphStore.state.nodes.find((n) => n.groupId === id);
-          if (!member) {
-            showToast("That group has no nodes on the map");
+          if (canvasView === "groups" || !graphStore.state.nodes.some((node) => node.groupId === id)) {
+            showCanvas("groups");
+            setSelectedGroupId(id);
+            if (canvasView !== "groups") showToast("Opened that group in the tree");
             return;
           }
-          focusNode(member.id);
+          const member = graphStore.state.nodes.find((node) => node.groupId === id);
+          if (member) focusNode(member.id);
         }}
       />
 
@@ -1285,6 +1482,14 @@ export default function App() {
       />
 
       <InfoPanel open={infoOpen} onClose={() => patchUi({ infoOpen: false })} />
+
+      {groupDelete ? (
+        <GroupDeleteModal
+          impact={groupDelete}
+          onConfirm={confirmDeleteGroup}
+          onCancel={() => setGroupDelete(null)}
+        />
+      ) : null}
 
       {draftPrompt && (
         <DraftPrompt

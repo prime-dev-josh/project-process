@@ -29,7 +29,6 @@ type Props = {
   onTogglePhysics: () => void;
   onToggleCards: () => void;
   onNodeSave: (patch: Partial<NodeEditPatch>) => void;
-  onCreateGroup: (title: string) => void;
   onUpdateGroup: (groupId: string, patch: { title?: string; color?: string }) => void;
 };
 
@@ -55,7 +54,6 @@ export default function LeftSidePanel({
   onTogglePhysics,
   onToggleCards,
   onNodeSave,
-  onCreateGroup,
   onUpdateGroup,
 }: Props) {
   const accent = editingNode ? nodeColor(editingNode, colorBy) : undefined;
@@ -73,7 +71,6 @@ export default function LeftSidePanel({
         groups={groups}
         colorBy={colorBy}
         onSave={onNodeSave}
-        onCreateGroup={onCreateGroup}
         onUpdateGroup={onUpdateGroup}
       />
     </div>

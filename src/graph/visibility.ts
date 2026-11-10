@@ -1,6 +1,7 @@
-import { UNGROUPED_FILTER } from "./groups";
+import { UNGROUPED_FILTER, groupTitle } from "./groups";
+import { groupPath, isLeaf, subtreeIds } from "./groupTree";
 import { nodeWorkflowStatus, type WorkflowStatus } from "./workflowStatus";
-import type { ColorBy, GraphLink, GraphNode } from "../types";
+import type { ColorBy, GraphGroup, GraphLink, GraphNode } from "../types";
 
 export function childrenOf(nodes: GraphNode[], id: string) {
   return nodes.filter((n) => n.parentId === id);
@@ -84,6 +85,48 @@ export function hasActiveFilters(
 }
 
 /** Matching nodes and links only — physics and reveal treat this as a standalone map. */
+/** Groups that match the active filter (ancestors included). `null` when no filters are active. */
+export function visibleGroupIdsForTree(
+  groups: GraphGroup[],
+  nodes: GraphNode[],
+  query: string,
+  colorBy: ColorBy,
+  options?: GraphFilterOptions,
+): Set<string> | null {
+  if (!hasActiveFilters(query, options)) return null;
+  const byId = new Map(groups.map((group) => [group.id, group]));
+  const hit = new Set<string>();
+  const q = query.trim().toLowerCase();
+
+  const addAncestors = (id: string) => {
+    let cur: string | null = id;
+    while (cur) {
+      hit.add(cur);
+      cur = byId.get(cur)?.parentId ?? null;
+    }
+  };
+
+  const titleHits = (group: GraphGroup) => {
+    if (!q) return false;
+    const pathStr = groupPath(groups, group.id).join(" ").toLowerCase();
+    return groupTitle(group.title).toLowerCase().includes(q) || pathStr.includes(q);
+  };
+
+  for (const group of groups) {
+    const titleHit = titleHits(group);
+    if (isLeaf(groups, group.id)) {
+      const members = nodes.filter((node) => node.groupId === group.id);
+      const nodeHit = members.some((node) => isFiltered(node, query, colorBy, options));
+      if (nodeHit || titleHit) addAncestors(group.id);
+    } else if (titleHit) {
+      addAncestors(group.id);
+      for (const id of subtreeIds(groups, group.id)) hit.add(id);
+    }
+  }
+
+  return hit;
+}
+
 export function filterGraph(
   nodes: GraphNode[],
   links: GraphLink[],

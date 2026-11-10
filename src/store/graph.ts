@@ -22,7 +22,7 @@ import {
 import { mapClientId, type EntityVersions, type FullMap, type MapDelta, type MapTx, type NodePosition } from "../lib/mapSync";
 import { loadDocument, newId } from "../storage";
 import type { GraphDocument, GraphGroup, GraphLink, GraphNode } from "../types";
-import { enqueueTx } from "./outbox";
+import { enqueueTx, outboxStore } from "./outbox";
 
 export type GraphState = {
   nodes: GraphNode[];
@@ -216,14 +216,28 @@ export function noteVersions(tx: MapTx, versions: EntityVersions) {
   });
 }
 
+function groupsWithPendingOutbox(incoming: GraphGroup[]) {
+  const pendingUpserts = new Map<string, GraphGroup>();
+  const pendingDeletes = new Set<string>();
+  for (const entry of outboxStore.state.entries) {
+    for (const group of entry.tx.upsertGroups ?? []) pendingUpserts.set(group.id, group);
+    for (const id of entry.tx.deleteGroupIds ?? []) pendingDeletes.add(id);
+  }
+  const byId = new Map(incoming.map((group) => [group.id, group]));
+  for (const [id, group] of pendingUpserts) byId.set(id, group);
+  for (const id of pendingDeletes) byId.delete(id);
+  return [...byId.values()];
+}
+
 export function applyFullMap(map: FullMap): ChangeItem[] {
   const before = snapshot(graphStore.state);
   const wasHydrated = graphStore.state.hydrated;
+  const groups = groupsWithPendingOutbox(map.groups ?? []);
   graphStore.setState((s) => ({
     ...s,
     nodes: map.nodes,
     links: map.links,
-    groups: map.groups ?? [],
+    groups,
     versions: map.versions,
     revision: map.revision,
     you: map.you,
@@ -232,7 +246,29 @@ export function applyFullMap(map: FullMap): ChangeItem[] {
     actions: wasHydrated ? s.actions : [],
     future: wasHydrated ? s.future : [],
   }));
-  return wasHydrated ? diffSnapshots(before, { nodes: map.nodes, links: map.links, groups: map.groups ?? [] }) : [];
+  return wasHydrated ? diffSnapshots(before, { nodes: map.nodes, links: map.links, groups }) : [];
+}
+
+/** Reloads groups from a full map without remounting the graph or refitting nodes. */
+export function applyGroupsRefresh(map: FullMap) {
+  const groups = groupsWithPendingOutbox(map.groups ?? []);
+  const incomingGroupId = new Map((map.nodes ?? []).map((node) => [node.id, node.groupId ?? null]));
+
+  graphStore.setState((s) => ({
+    ...s,
+    groups,
+    nodes: s.nodes.map((node) => {
+      if (!incomingGroupId.has(node.id)) return node;
+      const groupId = incomingGroupId.get(node.id) ?? null;
+      return node.groupId === groupId ? node : { ...node, groupId };
+    }),
+    versions: {
+      ...s.versions,
+      groups: { ...(map.versions.groups ?? {}) },
+    },
+    revision: Math.max(s.revision, map.revision),
+    you: map.you ?? s.you,
+  }));
 }
 
 function near(a: number | undefined, b: number | undefined) {

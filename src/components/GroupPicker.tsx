@@ -1,9 +1,10 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { groupPath, leafGroups } from "../graph/groupTree";
 import { groupPaintColor, groupTitle } from "../graph/groups";
 import { placePortaledMenu, portaledMenuListClass, portaledMenuShellClass, type PortaledMenuPos } from "../lib/dropdownPortal";
 import { handleOverlayWheel } from "../lib/overlayScroll";
-import { cx, field, primaryBtn } from "../styles";
+import { cx, field } from "../styles";
 import type { GraphGroup, GraphNode } from "../types";
 import HexColorField from "./HexColorField";
 import type { GroupEditPatch } from "./GroupManager";
@@ -15,7 +16,6 @@ type Props = {
   mixed?: boolean;
   emptyLabel?: string;
   onChange: (groupId: string | null) => void;
-  onCreate: (title: string) => void;
   onUpdateGroup?: (groupId: string, patch: GroupEditPatch) => void;
 };
 
@@ -84,33 +84,30 @@ export default function GroupPicker({
   mixed = false,
   emptyLabel = "None",
   onChange,
-  onCreate,
   onUpdateGroup,
 }: Props) {
   const current = !mixed ? groups.find((group) => group.id === groupId) ?? null : null;
   const currentMembers = current ? nodes.filter((n) => n.groupId === current.id) : [];
   const currentColor = current ? groupPaintColor(current) : undefined;
   const closedTitle = mixed ? emptyLabel : current ? groupTitle(current.title) : "None";
-  const closedHint = mixed
-    ? "Groups differ"
-    : current
-      ? `${currentMembers.length} node${currentMembers.length === 1 ? "" : "s"}`
-      : "Not in a group";
+  const currentPath = current ? groupPath(groups, current.id) : [];
+  const currentTrail = currentPath.length > 1 ? currentPath.slice(0, -1).join(" / ") : "";
+  const currentCount = `${currentMembers.length} node${currentMembers.length === 1 ? "" : "s"}`;
+  const closedHint = mixed ? "Groups differ" : current ? (currentTrail ? `${currentTrail} · ${currentCount}` : currentCount) : "Not in a group";
   const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const createRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [draft, setDraft] = useState("");
   const [menuPos, setMenuPos] = useState<PortaledMenuPos | null>(null);
+  const leaves = useMemo(() => leafGroups(groups), [groups]);
 
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return groups;
-    return groups.filter((group) => groupTitle(group.title).toLowerCase().includes(q));
-  }, [groups, query]);
+    if (!q) return leaves;
+    return leaves.filter((group) => groupPath(groups, group.id).join(" ").toLowerCase().includes(q));
+  }, [groups, leaves, query]);
 
   function placeMenu() {
     if (!rootRef.current) return;
@@ -120,7 +117,6 @@ export default function GroupPicker({
   function close() {
     setOpen(false);
     setQuery("");
-    setDraft("");
   }
 
   useEffect(() => {
@@ -153,18 +149,6 @@ export default function GroupPicker({
 
   function assign(id: string | null) {
     onChange(id);
-    close();
-  }
-
-  function createFrom(title: string) {
-    const next = title.trim();
-    if (!next) return;
-    const existing = groups.find((group) => groupTitle(group.title).toLowerCase() === next.toLowerCase());
-    if (existing) {
-      assign(existing.id);
-      return;
-    }
-    onCreate(next);
     close();
   }
 
@@ -249,6 +233,8 @@ export default function GroupPicker({
                 const members = nodes.filter((n) => n.groupId === group.id);
                 const tone = groupPaintColor(group);
                 const active = group.id === groupId;
+                const trail = groupPath(groups, group.id).slice(0, -1).join(" / ");
+                const countLabel = `${members.length} node${members.length === 1 ? "" : "s"}`;
                 return (
                   <li key={group.id}>
                     <button
@@ -265,7 +251,7 @@ export default function GroupPicker({
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-xs font-semibold text-[var(--text)]">{groupTitle(group.title)}</span>
                         <span className="block truncate text-[10px] text-[var(--muted)]">
-                          {members.length} node{members.length === 1 ? "" : "s"}
+                          {trail ? `${trail} · ${countLabel}` : countLabel}
                         </span>
                       </span>
                     </button>
@@ -276,25 +262,6 @@ export default function GroupPicker({
                 <li className="px-2 py-2 text-[11px] text-[var(--muted)]">No matching groups</li>
               ) : null}
             </ul>
-            <form
-              className="flex shrink-0 items-center gap-1 border-t border-[var(--line)] p-1.5"
-              onSubmit={(e) => {
-                e.preventDefault();
-                createFrom(draft || query);
-              }}
-            >
-              <input
-                ref={createRef}
-                className={cx(field, "min-w-0 flex-1 py-[5px] text-xs")}
-                placeholder="New group name"
-                aria-label="New group name"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-              />
-              <button type="submit" className={cx(primaryBtn, "shrink-0 px-2 py-[5px]")} disabled={!draft.trim() && !query.trim()}>
-                Create
-              </button>
-            </form>
           </div>,
           document.body,
         ) : null}

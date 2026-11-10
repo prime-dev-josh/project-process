@@ -1,4 +1,4 @@
-import type { GraphGroup, GraphNode } from "../types";
+import type { GraphGroup } from "../types";
 
 export const DEFAULT_GROUP_TITLE = "Untitled group";
 export const UNGROUPED_FILTER = "__ungrouped__";
@@ -20,11 +20,6 @@ export const GROUP_COLORS = [
 export function groupTitle(title: string | undefined) {
   const next = (title ?? "").trim();
   return next || DEFAULT_GROUP_TITLE;
-}
-
-export function pruneEmptyGroups(nodes: GraphNode[], groups: GraphGroup[]): GraphGroup[] {
-  const used = new Set(nodes.map((n) => n.groupId).filter((id): id is string => Boolean(id)));
-  return groups.filter((group) => used.has(group.id));
 }
 
 export function normalizeGroupColor(value: string | undefined | null): string | null {

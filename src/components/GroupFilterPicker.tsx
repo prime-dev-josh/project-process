@@ -1,16 +1,20 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { groupPath, leafGroups } from "../graph/groupTree";
 import { groupPaintColor, groupTitle, UNGROUPED_FILTER } from "../graph/groups";
+import { groupCompletionStats } from "../graph/workflowStatus";
 import { placePortaledMenu, portaledMenuListClass, portaledMenuShellClass, type PortaledMenuPos } from "../lib/dropdownPortal";
 import { handleOverlayWheel } from "../lib/overlayScroll";
 import { cx, field } from "../styles";
-import type { GraphGroup, GraphNode } from "../types";
+import type { ColorBy, GraphGroup, GraphNode } from "../types";
 
 type Props = {
   groups: GraphGroup[];
   nodes: GraphNode[];
+  colorBy: ColorBy;
   selected: string[];
   onChange: (next: string[]) => void;
+  onEditGroup?: (groupId: string, x: number, y: number) => void;
 };
 
 function GroupDot({ color, muted }: { color?: string; muted?: boolean }) {
@@ -27,7 +31,7 @@ function toggleId(list: string[], id: string) {
   return list.includes(id) ? list.filter((item) => item !== id) : [...list, id];
 }
 
-export default function GroupFilterPicker({ groups, nodes, selected, onChange }: Props) {
+export default function GroupFilterPicker({ groups, nodes, colorBy, selected, onChange, onEditGroup }: Props) {
   const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -73,11 +77,12 @@ export default function GroupFilterPicker({ groups, nodes, selected, onChange }:
     return !q || "ungrouped".includes(q);
   }, [query]);
 
+  const leaves = useMemo(() => leafGroups(groups), [groups]);
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return groups;
-    return groups.filter((group) => groupTitle(group.title).toLowerCase().includes(q));
-  }, [groups, query]);
+    if (!q) return leaves;
+    return leaves.filter((group) => groupPath(groups, group.id).join(" ").toLowerCase().includes(q));
+  }, [groups, leaves, query]);
 
   function placeMenu() {
     if (!rootRef.current) return;
@@ -161,7 +166,12 @@ export default function GroupFilterPicker({ groups, nodes, selected, onChange }:
             ref={menuRef}
             id={listId}
             className={portaledMenuShellClass}
-            style={{ top: menuPos.top, left: menuPos.left, width: menuPos.width, maxHeight: menuPos.maxHeight }}
+            style={{
+              top: menuPos.top,
+              left: menuPos.left,
+              width: Math.min(320, Math.max(menuPos.width, 260), window.innerWidth - menuPos.left - 8),
+              maxHeight: menuPos.maxHeight,
+            }}
             role="listbox"
             aria-label="Groups"
             aria-multiselectable="true"
@@ -175,18 +185,19 @@ export default function GroupFilterPicker({ groups, nodes, selected, onChange }:
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
-            <ul className={portaledMenuListClass}>
-              {selected.length ? (
-                <li className="mb-0.5 border-b border-[var(--line)] pb-0.5">
-                  <button
-                    type="button"
-                    className="flex w-full cursor-pointer items-center gap-2 rounded-md border-0 bg-transparent px-1.5 py-1.5 text-left text-[11px] font-semibold text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
-                    onClick={() => onChange([])}
-                  >
-                    Clear group filter
-                  </button>
-                </li>
-              ) : null}
+            {selected.length ? (
+              <button
+                type="button"
+                className="shrink-0 cursor-pointer border-0 border-b border-[var(--line)] bg-transparent px-2.5 py-1.5 text-left text-[11px] font-semibold text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+                onClick={() => onChange([])}
+              >
+                Clear group filter
+              </button>
+            ) : null}
+            <ul
+              className={cx(portaledMenuListClass, "max-h-none flex-1")}
+              style={{ maxHeight: Math.max(96, menuPos.maxHeight - (selected.length ? 72 : 40)) }}
+            >
               {showUngrouped ? (
                 <li>
                   <button
@@ -213,6 +224,9 @@ export default function GroupFilterPicker({ groups, nodes, selected, onChange }:
                 const members = nodes.filter((n) => n.groupId === group.id);
                 const tone = groupPaintColor(group);
                 const active = selected.includes(group.id);
+                const parents = groupPath(groups, group.id).slice(0, -1);
+                const { pct } = groupCompletionStats(nodes, colorBy, group.id);
+                const countLabel = `${members.length} node${members.length === 1 ? "" : "s"}`;
                 return (
                   <li key={group.id}>
                     <button
@@ -224,14 +238,22 @@ export default function GroupFilterPicker({ groups, nodes, selected, onChange }:
                         active && "ring-1 ring-inset ring-[var(--accent)]",
                       )}
                       onClick={() => toggle(group.id)}
+                      onContextMenu={(event) => {
+                        if (!onEditGroup) return;
+                        event.preventDefault();
+                        close();
+                        onEditGroup(group.id, event.clientX, event.clientY);
+                      }}
                     >
                       <GroupDot color={tone} />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-xs font-semibold text-[var(--text)]">{groupTitle(group.title)}</span>
-                        <span className="block truncate text-[10px] text-[var(--muted)]">
-                          {members.length} node{members.length === 1 ? "" : "s"}
-                        </span>
+                        {parents.length ? (
+                          <span className="block truncate text-[10px] font-semibold text-[var(--accent)]">{parents.join(" / ")}</span>
+                        ) : null}
+                        <span className="block truncate text-[10px] text-[var(--muted)]">{countLabel}</span>
                       </span>
+                      <span className="shrink-0 rounded-full bg-[#3b5bcc] px-1.5 py-0.5 text-[10px] font-bold text-white">{pct}%</span>
                     </button>
                   </li>
                 );

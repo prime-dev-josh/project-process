@@ -77,11 +77,22 @@ export function documentLink(link: GraphLink): GraphLink {
 }
 
 export function documentGroup(group: GraphGroup): GraphGroup {
-  return { id: group.id, title: group.title, color: group.color };
+  return {
+    id: group.id,
+    title: group.title,
+    color: group.color,
+    parentId: group.parentId ?? null,
+    sortOrder: group.sortOrder ?? 0,
+  };
 }
 
 export function sameGroup(a: GraphGroup, b: GraphGroup) {
-  return a.title === b.title && (a.color ?? "") === (b.color ?? "");
+  return (
+    a.title === b.title &&
+    (a.color ?? "") === (b.color ?? "") &&
+    (a.parentId ?? null) === (b.parentId ?? null) &&
+    (a.sortOrder ?? 0) === (b.sortOrder ?? 0)
+  );
 }
 
 export function actionKindFromChanges(changes: ChangeItem[]): ChangeKind {
@@ -331,6 +342,34 @@ export function diffSnapshots(saved: GraphSnapshot, current: GraphSnapshot): Cha
         targetId: group.id,
         title: `Changed group color`,
         detail: fieldChange("Color", prev.color || "default", group.color || "default"),
+      });
+    }
+    if ((prev.parentId ?? null) !== (group.parentId ?? null)) {
+      const parentName = (parentId: string | null | undefined) => {
+        if (!parentId) return "Top";
+        return (
+          current.groups.find((item) => item.id === parentId)?.title ||
+          savedGroups.get(parentId)?.title ||
+          "group"
+        );
+      };
+      changes.push({
+        id: `group-parent-${group.id}`,
+        kind: "update",
+        target: "group",
+        targetId: group.id,
+        title: "Moved group",
+        detail: fieldChange("Parent", parentName(prev.parentId), parentName(group.parentId)),
+      });
+    }
+    if ((prev.sortOrder ?? 0) !== (group.sortOrder ?? 0)) {
+      changes.push({
+        id: `group-order-${group.id}`,
+        kind: "update",
+        target: "group",
+        targetId: group.id,
+        title: "Reordered group",
+        detail: fieldChange("Order", String(prev.sortOrder ?? 0), String(group.sortOrder ?? 0)),
       });
     }
   }

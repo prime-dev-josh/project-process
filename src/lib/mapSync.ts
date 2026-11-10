@@ -1,5 +1,5 @@
 import {
-  graphGroupSchema,
+  asGroupRecord,
   graphLinkSchema,
   graphNodeSchema,
   type GraphDocument,
@@ -93,8 +93,7 @@ function parseLink(raw: RawRow) {
 }
 
 function parseGroup(raw: RawRow) {
-  const parsed = graphGroupSchema.safeParse(raw);
-  return parsed.success ? parsed.data : null;
+  return asGroupRecord(raw);
 }
 
 function rows(value: unknown): RawRow[] {
@@ -103,7 +102,7 @@ function rows(value: unknown): RawRow[] {
 
 export async function fetchMap(since?: number): Promise<MapFetch> {
   const query = since && since > 0 ? `?since=${since}` : "";
-  const res = await fetch(`/api/map${query}`);
+  const res = await fetch(`/api/map${query}`, { cache: "no-store" });
   const body = (await res.json().catch(() => null)) as RawRow | null;
   if (!res.ok || !body?.ok) {
     throw new MapFetchError(typeof body?.error === "string" ? body.error : `Map request failed (${res.status})`);

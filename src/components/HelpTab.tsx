@@ -220,7 +220,8 @@ export default function HelpTab() {
           <Card icon={<IcoEdit />} title="Edit a node" body="Click a ball — the left panel opens. Status, person, group, and class (Start play triangle, General circle, End stop square) save instantly; Title and Description save with Enter / Ctrl+Enter or the check button." />
           <Card icon={<IcoAdd />} title="Child nodes" body="Adding from a node's menu links the new node with a one-way arrow from the original and copies that node's group and assignee." />
           <Card icon={<IcoLink />} title="Edit a link" body="Right-click a connection to flip, change arrows, insert, or delete." />
-          <Card icon={<IcoSelect />} title="Name a group" body="Lasso or Shift-click two or more nodes, then use the popup dropdown to assign an existing group, create a new one, or set None. Modify Node uses the same control for a single node. Each group keeps a hex color — right-click a group badge in the filter panel to edit name and color, or use the group picker on nodes. A colored membrane wraps the members, with the group name on the rim." />
+          <Card icon={<IcoSelect />} title="Name a group" body="Switch the header to Groups to build the tree. Folders only organize it; create assignable groups there, then pick them from a node or a multi-select. Set None to ungroup. Each group keeps a hex color — right-click it in the Groups list to edit name and color. A colored membrane wraps the members, with the group name on the rim." />
+          <Card icon={<IcoView />} title="Groups view" body="Map | Groups switches to a top-down chart with no physics. The left rail uses the same search and filters as the map; groups that do not match fade to 50% opacity on the chart. Double-click a box or use its pencil to rename and recolor. Drag a box to reparent: drop on the lower part of another box (or the band below it) to nest under it; the top band makes that group your child; use the left or right edge between siblings only to reorder. Drag the background to pan, scroll to zoom, and Fit frames the tree. Refresh reloads the tree from the shared map without restarting the graph. Adding a child under a group that already has nodes moves those nodes onto the new child. Deleting a folder removes the subtree and ungroups those nodes." />
           <Card
             icon={<IcoFlow />}
             title="Highlight flow"
@@ -235,7 +236,7 @@ export default function HelpTab() {
           <Card
             icon={<IcoFilter />}
             title="Search & filter"
-            body="Search titles, tap status pills, or click faces and group badges in the People and Groups grids (percent done on each badge). Groups multi-select, including Ungrouped. Click People or Groups headings to expand or collapse each grid. Each filter change rebuilds a new map of the matches — same intro animation, physics only among visible nodes — while the filter panel stays on screen. If nothing matches, the panel says so. Clear filters resets everything; Fit reframes matches."
+            body="Search titles, tap status pills, or click faces in the People grid (percent done on each badge). Groups opens a list to the right of the panel: search stays at the top, the group list scrolls, and a group with parents shows that path under its name. Groups multi-select, including Ungrouped. Click the People heading to expand or collapse that grid. Each filter change rebuilds a new map of the matches — same intro animation, physics only among visible nodes — while the filter panel stays on screen. If nothing matches, the panel says so. Clear filters resets everything; Fit reframes matches."
           />
           <Card icon={<IcoStatus />} title="Status" body="Incomplete (red), in progress / WIP (gold), and done (green) — shown as the ring on each ball and in the filter pills." />
           <Card icon={<IcoPeople />} title="Assign people" body="Open the assignee dropdown on a node or multi-select panel. The closed row shows the current person; search to pick someone else or Unassigned. Assigned nodes use that person's Entra photo when Graph can reach it." />
@@ -253,6 +254,7 @@ export default function HelpTab() {
           <Card icon={<IcoLive />} title="Sync updates" body="The bell (bottom right) lists other people's changes. Filter them, mark them read, or click Show to jump to a node." />
           <Card icon={<IcoLive />} title="Offline queue" body="If saving fails, unsaved changes queue above the bell and retry automatically. Use Retry now or Discard if it stays stuck." />
           <Card icon={<IcoHistory />} title="Undo" body={<>Header arrows, or <Key>Ctrl/Cmd+Z</Key> / <Key>Y</Key>. History is local; writes still sync.</>} />
+          <Card icon={<IcoView />} title="Export" body="Export opens a menu: Full CSV of nodes, groups, and links (with hierarchy paths); a landscape flowchart PDF (Start / process / End boxes from node class and connections); a documentation PDF with a table of contents from the node tree, group folders, and links; or JSON for a full map file. Choose Save as PDF in the print dialog." />
         </div>
       </section>
 
