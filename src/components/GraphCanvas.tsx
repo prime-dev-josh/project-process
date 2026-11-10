@@ -148,7 +148,8 @@ function smoothstep(edge0: number, edge1: number, x: number) {
 
 function dotRadius(node: GraphNode, globalScale: number, enlarge: number) {
   const base = (2.7 + node.size * 2 + Math.max(0, 2.1 - node.level * 0.32)) * enlarge;
-  const screen = Math.min(base * globalScale, 6.5 + node.size * 4.5 * enlarge);
+  const screenCap = Math.min(360, 20 * enlarge + node.size * 14 * enlarge);
+  const screen = Math.min(base * globalScale, screenCap);
   return screen / globalScale;
 }
 

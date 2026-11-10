@@ -87,9 +87,9 @@ export const graphSettingsSchema = z
     showText: raw.showText !== false,
     pulse: false,
     pulseSpeed: 0.7,
-    enlarge: Math.min(4, Math.max(1, raw.enlarge)),
-    textScale: Math.min(1.8, Math.max(0.7, raw.textScale ?? raw.enlarge)),
-    cardScale: Math.min(1.8, Math.max(0.7, raw.cardScale ?? raw.enlarge)),
+    enlarge: Math.min(28, Math.max(3, raw.enlarge)),
+    textScale: Math.min(4, Math.max(0.7, raw.textScale ?? raw.enlarge)),
+    cardScale: Math.min(4, Math.max(0.7, raw.cardScale ?? raw.enlarge)),
   }));
 
 export const graphDocumentInputSchema = z.object({

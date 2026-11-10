@@ -242,7 +242,7 @@ export default function HelpTab() {
           <Card
             icon={<IcoView />}
             title="View"
-            body="Fit, Reorg, Physics, Text, and Cards live under View. Node, Text, and Card sliders scale those pieces. Reorg untangles overlaps and stretches links — it does not pull the map into a gravity well. Physics must be on for Advanced: five-step Spread, Link length, and Padding sliders apply to the live layout as you move them. View rotation (compass) and these prefs stay on this device — Reset view prefs restores defaults."
+            body="Fit, Reorg, Physics, Text, and Cards live under View. Node, Text, and Card are five-step sliders with a wide scale — Node especially grows discs and Start/End shapes. Reorg untangles overlaps and stretches links — it does not pull the map into a gravity well. Physics must be on for Advanced: five-step Spread, Link length, and Padding sliders apply to the live layout as you move them. View rotation (compass) and these prefs stay on this device — Reset view prefs restores defaults."
           />
         </div>
       </section>

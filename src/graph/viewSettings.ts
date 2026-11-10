@@ -26,6 +26,13 @@ export const FORCE_INTENSITY = {
   collide: [8, 28, 60, 110, 180],
 } as const;
 
+/** Five discrete Look slider steps (Node / Text / Card). */
+export const LOOK_SCALE = {
+  enlarge: [3, 6, 11, 18, 28],
+  textScale: [0.8, 1.2, 1.8, 2.8, 4],
+  cardScale: [0.8, 1.2, 1.8, 2.8, 4],
+} as const;
+
 export function nearestForceLevel(values: readonly number[], value: number): number {
   let best = 0;
   let bestDist = Infinity;
@@ -53,6 +60,9 @@ function withForcedPhysics(settings: GraphSettings): GraphSettings {
     charge: snapForceValue(FORCE_INTENSITY.charge, settings.charge),
     linkDistance: snapForceValue(FORCE_INTENSITY.linkDistance, settings.linkDistance),
     collide: snapForceValue(FORCE_INTENSITY.collide, settings.collide),
+    enlarge: snapForceValue(LOOK_SCALE.enlarge, settings.enlarge),
+    textScale: snapForceValue(LOOK_SCALE.textScale, settings.textScale ?? settings.enlarge),
+    cardScale: snapForceValue(LOOK_SCALE.cardScale, settings.cardScale ?? settings.enlarge),
   });
 }
 

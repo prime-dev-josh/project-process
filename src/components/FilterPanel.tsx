@@ -19,6 +19,7 @@ import { personStyle } from "../data/personStyle";
 import {
   FORCE_INTENSITY,
   FORCE_LEVELS,
+  LOOK_SCALE,
   nearestForceLevel,
 } from "../graph/viewSettings";
 import { cx, field, sideH2 } from "../styles";
@@ -432,27 +433,21 @@ export default function FilterPanel({
                 else onToggleCards();
               }}
             />
-            <SliderField
+            <ForceIntensityRow
               label="Node"
-              min={1}
-              max={4}
-              step={0.05}
+              values={LOOK_SCALE.enlarge}
               value={settings.enlarge ?? 1}
               onChange={(enlarge) => onSettings({ enlarge })}
             />
-            <SliderField
+            <ForceIntensityRow
               label="Text"
-              min={0.7}
-              max={1.8}
-              step={0.05}
+              values={LOOK_SCALE.textScale}
               value={settings.textScale ?? settings.enlarge ?? 1}
               onChange={(textScale) => onSettings({ textScale })}
             />
-            <SliderField
+            <ForceIntensityRow
               label="Card"
-              min={0.7}
-              max={1.8}
-              step={0.05}
+              values={LOOK_SCALE.cardScale}
               value={settings.cardScale ?? settings.enlarge ?? 1}
               onChange={(cardScale) => onSettings({ cardScale })}
             />
