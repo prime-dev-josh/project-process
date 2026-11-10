@@ -34,7 +34,7 @@ import { detangleLayout } from "../graph/detangle";
 import { buildUndirectedAdjacency, nodesWithinHops } from "../graph/elasticDrag";
 import { GRAPH_MAX_ZOOM, GRAPH_MIN_ZOOM } from "../graph/viewSettings";
 import { placeRevealedNode, revealedNeighbor, revealOrder, topologyKey } from "../graph/stagedReveal";
-import { filterGraph, isFiltered, linkEnds } from "../graph/visibility";
+import { filterGraph, isFiltered, linkEnds, matchesQuery } from "../graph/visibility";
 import { STATUS_COLORS, type WorkflowStatus } from "../graph/workflowStatus";
 import { loadPersonPhoto } from "../lib/personPhoto";
 import type { ArrowStyle, GraphGroup, GraphLink, GraphNode, GraphSettings } from "../types";
@@ -97,6 +97,8 @@ type Props = {
 };
 
 const REVEAL_MS = 22;
+const SEARCH_DIM_ALPHA = 0.25;
+const FLOW_DIM_ALPHA = 0.16;
 const REVEAL_FADE_MS = 320;
 /** Intro camera: never zoom in past this; grows with the revealed bounds. */
 const REVEAL_ZOOM_MAX = 0.095;
@@ -572,10 +574,10 @@ function GraphCanvas({
     return () => window.clearTimeout(timer);
   }, [search]);
   const { nodes: mapNodes, links: mapLinks } = useMemo(
-    () => filterGraph(nodes, links, mapSearch, settings.colorBy, filterOptions),
-    [nodes, links, mapSearch, settings.colorBy, filterOptions],
+    () => filterGraph(nodes, links, settings.colorBy, filterOptions),
+    [nodes, links, settings.colorBy, filterOptions],
   );
-  const filterKey = `${mapSearch.trim()}|${statusFilters.join(",")}|${employeeFilter ?? ""}|${groupFilters.join(",")}`;
+  const filterKey = `${statusFilters.join(",")}|${employeeFilter ?? ""}|${groupFilters.join(",")}`;
 
   const [revealedIds, setRevealedIds] = useState<string[]>([]);
   const [initReveal, setInitReveal] = useState(true);
@@ -775,8 +777,23 @@ function GraphCanvas({
 
   function isShown(node: GraphNode | undefined) {
     if (!node) return false;
-    if (!hideFiltered && !mapSearch.trim()) return true;
-    return isFiltered(node, mapSearch, settings.colorBy, filterOptions);
+    if (!hideFiltered) return true;
+    return isFiltered(node, "", settings.colorBy, filterOptions);
+  }
+
+  function searchMiss(node: GraphNode | undefined) {
+    return Boolean(node && mapSearch.trim() && !matchesQuery(node, mapSearch));
+  }
+
+  function nodePaintAlpha(node: GraphNode) {
+    const fade = revealOpacity(node.id);
+    if (isFlowDim(node)) return FLOW_DIM_ALPHA * fade;
+    if (searchMiss(node)) return SEARCH_DIM_ALPHA * fade;
+    return fade;
+  }
+
+  function linkSearchFade(src: GraphNode | undefined, tgt: GraphNode | undefined) {
+    return searchMiss(src) || searchMiss(tgt) ? SEARCH_DIM_ALPHA : 1;
   }
 
   const highlightSet = useMemo(
@@ -1008,15 +1025,15 @@ function GraphCanvas({
     for (const node of liveEngineNodes()) {
       if (node.x == null || node.y == null) continue;
       if (!isShown(node)) continue;
-      const matched = isFiltered(node, mapSearch, settings.colorBy, filterOptions);
-      const dim = !matched || isFlowDim(node);
+      const dim = isFlowDim(node);
+      const searchHit = Boolean(mapSearch.trim()) && !searchMiss(node);
       const selected = selectedSet.has(node.id);
       const hovered = node.id === hoveredId;
       const connecting = node.id === connectFrom;
       const r = dotRadius(node, globalScale, nodeScale);
       const p = screenOfNode(node.x, node.y);
       ctx.save();
-      ctx.globalAlpha = (dim ? 0.16 : 1) * revealOpacity(node.id);
+      ctx.globalAlpha = nodePaintAlpha(node);
       if (asCard) {
         const { w, h } = cardBox(node, globalScale, cardScale);
         const sw = w * globalScale;
@@ -1057,8 +1074,10 @@ function GraphCanvas({
             ctx.fillText(line, rx + 8, bodyY + i * (bodyFit.fontPx + 3));
           });
         }
-      } else if (shouldLabel(node, globalScale, selected, hovered, Boolean(search && matched))) {
-        ctx.globalAlpha = (dim ? 0.16 : 1) * (selected || hovered || node.level <= 1 ? 1 : smoothstep(0.28, 0.7, globalScale || 0.3));
+      } else if (shouldLabel(node, globalScale, selected, hovered, searchHit)) {
+        ctx.globalAlpha =
+          nodePaintAlpha(node) *
+          (selected || hovered || node.level <= 1 ? 1 : smoothstep(0.28, 0.7, globalScale || 0.3));
         const weight = node.level === 0 ? 700 : 600;
         const titleFit = fitWrappedText(ctx, node.title, 148 * textScale, 2, 11 * textScale, weight);
         const rScreen = r * globalScale;
@@ -1940,13 +1959,10 @@ function GraphCanvas({
       }}
       linkColor={(l) => {
         const e = linkEnds(l);
-        const fade = Math.min(revealOpacity(e.source), revealOpacity(e.target));
         const src = nodeById.get(e.source);
         const tgt = nodeById.get(e.target);
-        const filterDim =
-          (src && !isFiltered(src, mapSearch, settings.colorBy, filterOptions)) ||
-          (tgt && !isFiltered(tgt, mapSearch, settings.colorBy, filterOptions));
-        if (filterDim || isFlowLinkDim(l)) return fadeColor(palette.linkDim, fade);
+        const fade = Math.min(revealOpacity(e.source), revealOpacity(e.target)) * linkSearchFade(src, tgt);
+        if (isFlowLinkDim(l)) return fadeColor(palette.linkDim, fade);
         const pulse = flowPulseAmount(l);
         if (pulse > 0.05) return fadeColor(pulseStroke(pulse, theme), fade);
         const onFlow = highlightFlow && isFlowLink(l, highlightFlow.hops);
@@ -1970,13 +1986,10 @@ function GraphCanvas({
       linkDirectionalArrowRelPos={0.82}
       linkDirectionalArrowColor={(l) => {
         const e = linkEnds(l);
-        const fade = Math.min(revealOpacity(e.source), revealOpacity(e.target));
         const src = nodeById.get(e.source);
         const tgt = nodeById.get(e.target);
-        const filterDim =
-          (src && !isFiltered(src, mapSearch, settings.colorBy, filterOptions)) ||
-          (tgt && !isFiltered(tgt, mapSearch, settings.colorBy, filterOptions));
-        if (filterDim || isFlowLinkDim(l)) return fadeColor(palette.linkDim, fade);
+        const fade = Math.min(revealOpacity(e.source), revealOpacity(e.target)) * linkSearchFade(src, tgt);
+        if (isFlowLinkDim(l)) return fadeColor(palette.linkDim, fade);
         const pulse = flowPulseAmount(l);
         if (pulse > 0.05) return fadeColor(pulseStroke(pulse, theme), fade);
         const onFlow = highlightFlow && isFlowLink(l, highlightFlow.hops);
@@ -1990,15 +2003,12 @@ function GraphCanvas({
         const src = typeof link.source === "object" ? link.source as GraphNode : nodeById.get(String(link.source));
         const tgt = typeof link.target === "object" ? link.target as GraphNode : nodeById.get(String(link.target));
         if (!src || !tgt || !isShown(src) || !isShown(tgt) || src.x == null || src.y == null || tgt.x == null || tgt.y == null) return;
-        ctx.globalAlpha = Math.min(revealOpacity(src.id), revealOpacity(tgt.id));
+        ctx.globalAlpha = Math.min(revealOpacity(src.id), revealOpacity(tgt.id)) * linkSearchFade(src, tgt);
         const e = linkEnds(link);
-        const filterDim =
-          !isFiltered(src, mapSearch, settings.colorBy, filterOptions) ||
-          !isFiltered(tgt, mapSearch, settings.colorBy, filterOptions);
         const pulse = flowPulseAmount(link);
         const hot = link.id === selectedLinkId || selectedSet.has(e.source) || selectedSet.has(e.target);
         const onFlow = highlightFlow && isFlowLink(link, highlightFlow.hops);
-        ctx.fillStyle = filterDim || isFlowLinkDim(link)
+        ctx.fillStyle = isFlowLinkDim(link)
           ? palette.linkDim
           : pulse > 0.05
             ? pulseStroke(pulse, theme)
@@ -2043,8 +2053,8 @@ function GraphCanvas({
         const x = node.x ?? 0;
         const y = node.y ?? 0;
         const border = nodeColor(node, settings.colorBy);
-        const matched = isFiltered(node, mapSearch, settings.colorBy, filterOptions);
-        const dim = !matched || isFlowDim(node);
+        const dim = isFlowDim(node);
+        const searchHit = Boolean(mapSearch.trim()) && !searchMiss(node);
         const selected = selectedSet.has(node.id);
         const hovered = node.id === hoveredId;
         const connecting = node.id === connectFrom;
@@ -2055,9 +2065,8 @@ function GraphCanvas({
         const asCard = cardsAtZoom(Boolean(settings.cardInfo), globalScale);
         const showText = settings.showText !== false;
         const unrotate = labelUnrotate();
-        const alpha = (dim ? 0.16 : 1) * revealOpacity(node.id);
         ctx.save();
-        ctx.globalAlpha = alpha;
+        ctx.globalAlpha = nodePaintAlpha(node);
 
         const email = assigneeEmail(node);
         const photo = email ? photosRef.current.get(email) : undefined;
@@ -2100,7 +2109,7 @@ function GraphCanvas({
           /* labels/cards paint on the unrotated overlay so they stay sharp */
         } else if (asCard) {
           const { w, h } = cardBox(node, globalScale, cardScale);
-          ctx.globalAlpha = alpha;
+          ctx.globalAlpha = nodePaintAlpha(node);
           inScreenSpace(ctx, x, y, globalScale, (k) => {
             const sw = w * k;
             const sh = h * k;
@@ -2142,9 +2151,9 @@ function GraphCanvas({
               });
             }
           }, unrotate);
-        } else if (showText && shouldLabel(node, globalScale, selected, hovered, Boolean(search && matched))) {
-          ctx.globalAlpha = alpha * smoothstep(0.28, 0.7, globalScale || 0.3);
-          if (selected || hovered || node.level <= 1) ctx.globalAlpha = alpha;
+        } else if (showText && shouldLabel(node, globalScale, selected, hovered, searchHit)) {
+          ctx.globalAlpha = nodePaintAlpha(node) * smoothstep(0.28, 0.7, globalScale || 0.3);
+          if (selected || hovered || node.level <= 1) ctx.globalAlpha = nodePaintAlpha(node);
           inScreenSpace(ctx, x, y, globalScale, (k) => {
             const weight = node.level === 0 ? 700 : 600;
             const rScreen = r * k;

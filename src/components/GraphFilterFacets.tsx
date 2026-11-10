@@ -76,7 +76,9 @@ export default function GraphFilterFacets({
     () => nodes.filter((node) => isFiltered(node, search, colorBy, filterOptions)).length,
     [nodes, search, colorBy, filterOptions],
   );
-  const filtersHideAll = hasFilters && nodes.length > 0 && matchingNodeCount === 0;
+  const facetsHideNodes =
+    statusFilters.length > 0 || employeeFilter != null || (showGroupFacet && groupFilters.length > 0);
+  const filtersHideAll = facetsHideNodes && nodes.length > 0 && matchingNodeCount === 0;
   const statusSelectionActive = statusFilters.length > 0;
   const peopleSelectionActive = employeeFilter != null;
 

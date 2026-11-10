@@ -84,7 +84,6 @@ export function hasActiveFilters(
   );
 }
 
-/** Matching nodes and links only — physics and reveal treat this as a standalone map. */
 /** Groups that match the active filter (ancestors included). `null` when no filters are active. */
 export function visibleGroupIdsForTree(
   groups: GraphGroup[],
@@ -127,15 +126,15 @@ export function visibleGroupIdsForTree(
   return hit;
 }
 
+/** Status / people / group matches only. Search dims on the canvas instead of dropping nodes. */
 export function filterGraph(
   nodes: GraphNode[],
   links: GraphLink[],
-  query: string,
   colorBy: ColorBy,
   options?: GraphFilterOptions,
 ) {
-  if (!hasActiveFilters(query, options)) return { nodes, links };
-  const mapNodes = nodes.filter((node) => isFiltered(node, query, colorBy, options));
+  if (!hasActiveFilters("", options)) return { nodes, links };
+  const mapNodes = nodes.filter((node) => isFiltered(node, "", colorBy, options));
   const ids = new Set(mapNodes.map((node) => node.id));
   const mapLinks = links.filter((link) => {
     const e = linkEnds(link);

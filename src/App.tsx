@@ -117,8 +117,7 @@ export default function App() {
   const [groupDelete, setGroupDelete] = useState<GroupDeleteImpact | null>(null);
   const [groupsRefreshing, setGroupsRefreshing] = useState(false);
   const groupsRefreshingRef = useRef(false);
-  const hideFiltered =
-    Boolean(search.trim()) || statusFilters.length > 0 || employeeFilter != null || groupFilters.length > 0;
+  const hideFiltered = statusFilters.length > 0 || employeeFilter != null || groupFilters.length > 0;
   const [size, setSize] = useState({ w: 1200, h: 800 });
   const [zoom, setZoom] = useState(1);
   const [viewRotation, setViewRotation] = useState(loadViewRotation);
@@ -853,7 +852,8 @@ export default function App() {
     const filterOptions = { statusFilters, employeeEmail: employeeFilter, groupIds: groupFilters };
     const toFit = nodes.filter((n) => {
       if (typeof n.x !== "number" || typeof n.y !== "number") return false;
-      if (hideFiltered && !isFiltered(n, search, settings.colorBy, filterOptions)) return false;
+      if (hideFiltered && !isFiltered(n, "", settings.colorBy, filterOptions)) return false;
+      if (search.trim() && !isFiltered(n, search, settings.colorBy, filterOptions)) return false;
       return true;
     });
     if (!toFit.length) return null;
@@ -909,7 +909,7 @@ export default function App() {
       const node = nodeById.get(id);
       if (!node) return false;
       if (!hideFiltered) return true;
-      return isFiltered(node, search, settings.colorBy, options);
+      return isFiltered(node, "", settings.colorBy, options);
     };
     setSelectedIds((prev) => {
       const next = prev.filter(onMap);
