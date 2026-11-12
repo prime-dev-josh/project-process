@@ -1061,22 +1061,24 @@ export default function App() {
           }
           showToast("Preparing export…");
           window.setTimeout(() => {
-            try {
-              if (kind === "csv") {
-                downloadTextFile(buildFullCsv(nodes, links, groups), "project-process.csv");
-                showToast("Exported CSV");
-                return;
+            void (async () => {
+              try {
+                if (kind === "csv") {
+                  downloadTextFile(buildFullCsv(nodes, links, groups), "project-process.csv");
+                  showToast("Exported CSV");
+                  return;
+                }
+                if (kind === "docs") {
+                  const delivery = await printDocumentationPdf(nodes, links, groups);
+                  showToast(delivery === "downloaded" ? "Downloaded documentation PDF" : "Opened documentation PDF");
+                  return;
+                }
+                downloadJson({ nodes, links, groups, settings });
+                showToast("Exported JSON");
+              } catch {
+                showToast("Export failed");
               }
-              if (kind === "docs") {
-                printDocumentationPdf(nodes, links, groups);
-                showToast("Opened documentation print preview");
-                return;
-              }
-              downloadJson({ nodes, links, groups, settings });
-              showToast("Exported JSON");
-            } catch {
-              showToast("Export failed");
-            }
+            })();
           }, 0);
         }}
         onImport={() => importRef.current?.click()}
@@ -1542,17 +1544,16 @@ export default function App() {
             setFlowchartExportOpen(false);
             showToast("Preparing export…");
             window.setTimeout(() => {
-              try {
-                const pages = flowchartPagesForGroups(nodes, links, groups, groupIds);
-                printFlowchartPdf(pages);
-                showToast(
-                  pages.length === 1
-                    ? "Opened flowchart print preview"
-                    : `Opened ${pages.length} flowchart pages`,
-                );
-              } catch {
-                showToast("Export failed");
-              }
+              void (async () => {
+                try {
+                  const pages = flowchartPagesForGroups(nodes, links, groups, groupIds);
+                  const delivery = await printFlowchartPdf(pages);
+                  const opened = delivery === "downloaded" ? "Downloaded" : "Opened";
+                  showToast(pages.length === 1 ? `${opened} flowchart PDF` : `${opened} flowchart PDF for ${pages.length} groups`);
+                } catch {
+                  showToast("Export failed");
+                }
+              })();
             }, 0);
           }}
         />

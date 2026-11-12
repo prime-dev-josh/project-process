@@ -254,7 +254,7 @@ export default function HelpTab() {
           <Card icon={<IcoLive />} title="Sync updates" body="The bell (bottom right) lists other people's changes. Filter them, mark them read, or click Show to jump to a node." />
           <Card icon={<IcoLive />} title="Offline queue" body="If saving fails, unsaved changes queue above the bell and retry automatically. Use Retry now or Discard if it stays stuck." />
           <Card icon={<IcoHistory />} title="Undo" body={<>Header arrows, or <Key>Ctrl/Cmd+Z</Key> / <Key>Y</Key>. History is local; writes still sync.</>} />
-          <Card icon={<IcoView />} title="Export" body="Export opens a menu: Full CSV of nodes, groups, and links (with hierarchy paths); a portrait flowchart PDF with one or more pages per selected group (top-down boxes, full titles, the group name on the left rail); a portrait documentation PDF laid out as a textbook (contents with dotted leaders, then one section per group); or JSON for a full map file. Choose Save as PDF in the print dialog." />
+          <Card icon={<IcoView />} title="Export" body="Export opens a menu: Full CSV of nodes, groups, and links (with hierarchy paths); a portrait flowchart PDF with a PRIME AE cover and one or more pages per selected group; a portrait documentation PDF with a cover, contents, and one section per group; or JSON for a full map file. The PDF opens in a new tab." />
         </div>
       </section>
 
