@@ -1,5 +1,7 @@
 import type { HistoryAction } from "../graph/history";
+import { useResizablePanel } from "../hooks/useResizablePanel";
 import { cx, filterHint, ghostBtn, historyKind, sideH2 } from "../styles";
+import PanelResizeHandle from "./PanelResizeHandle";
 
 type Props = {
   open: boolean;
@@ -9,14 +11,17 @@ type Props = {
 };
 
 export default function HistoryPanel({ open, history, onUndo, onClose }: Props) {
+  const panel = useResizablePanel("history");
   if (!open) return null;
   const items = [...history].reverse();
   return (
     <aside
-      className="history-panel fixed top-[58px] right-3 z-[70] max-h-[calc(100vh-80px)] overflow-auto rounded-xl border border-[var(--line)] bg-[var(--card)] px-4 pt-3.5 pb-[18px] shadow-[var(--shadow)] [width:min(380px,calc(100vw-24px))]"
+      className="history-panel fixed top-[58px] right-3 z-[70] max-h-[calc(100vh-80px)] overflow-visible rounded-xl border border-[var(--line)] bg-[var(--card)] shadow-[var(--shadow)]"
+      style={{ width: panel.width }}
       role="dialog"
       aria-labelledby="historyTitle"
     >
+      <div className="max-h-[calc(100vh-80px)] overflow-auto px-4 pt-3.5 pb-[18px]">
       <div className="mb-2.5 flex justify-between gap-2.5">
         <h2 id="historyTitle" className="m-0 text-base text-[var(--accent)]">History</h2>
         <button type="button" className={ghostBtn} onClick={onClose}>Close</button>
@@ -54,6 +59,17 @@ export default function HistoryPanel({ open, history, onUndo, onClose }: Props) 
           </ul>
         </section>
       )}
+      </div>
+      <PanelResizeHandle
+        side="right"
+        value={panel.width}
+        min={panel.min}
+        max={panel.max}
+        label="Resize history panel"
+        onChange={panel.setWidth}
+        onCommit={panel.commit}
+        onReset={panel.reset}
+      />
     </aside>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState } from "react";
 import { type WorkflowStatus } from "../graph/workflowStatus";
 import {
   FORCE_INTENSITY,
@@ -33,10 +33,7 @@ type Props = {
   onTogglePhysics: () => void;
   onToggleCards: () => void;
   onResetSettings: () => void;
-  selectedNodeId?: string | null;
   onUpdateGroup: (groupId: string, patch: GroupEditPatch) => void;
-  /** When set, replaces the View section below the filter divider (e.g. node editor). */
-  viewReplacement?: ReactNode;
 };
 
 export default function FilterPanel({
@@ -59,15 +56,9 @@ export default function FilterPanel({
   onTogglePhysics,
   onToggleCards,
   onResetSettings,
-  selectedNodeId = null,
   onUpdateGroup,
-  viewReplacement,
 }: Props) {
   const [advanced, setAdvanced] = useState(false);
-
-  useEffect(() => {
-    if (selectedNodeId) setAdvanced(false);
-  }, [selectedNodeId]);
   return (
     <div className="filter-panel flex h-full min-h-0 flex-col">
       <div className="flex-col p-2">
@@ -121,13 +112,7 @@ export default function FilterPanel({
         />
       </section>
 
-      <section
-        className={cx(
-          "flex min-h-0 flex-1 flex-col border-t border-[var(--line)]",
-          viewReplacement ? "overflow-hidden pb-0" : "shrink-0 pb-0.5",
-        )}
-      >
-        {viewReplacement ?? (
+      <section className="flex min-h-0 flex-1 shrink-0 flex-col border-t border-[var(--line)] pb-0.5">
           <div className="p-2">
             <h2 className={cx(sideH2, "mb-1.5")}>View</h2>
             <p className="mb-1 text-[10px] font-semibold tracking-wide text-[var(--muted)] uppercase">
@@ -251,7 +236,6 @@ export default function FilterPanel({
               </div>
             ) : null}
           </div>
-        )}
       </section>
     </div>
   );

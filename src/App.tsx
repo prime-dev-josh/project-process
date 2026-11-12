@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@tanstack/react-store";
 import DraftPrompt from "./components/DraftPrompt";
+import FlowchartExportModal from "./components/FlowchartExportModal";
 import GroupDeleteModal from "./components/GroupDeleteModal";
 import EditLinkPanel from "./components/EditLinkPanel";
-import { type NodeEditPreview } from "./components/EditNodePanel";
+import EditNodePanel, { type NodeEditPreview } from "./components/EditNodePanel";
 import GroupTreeCanvas from "./components/GroupTreeCanvas";
 import GroupTreeInspector from "./components/GroupTreeInspector";
 import LeftSidePanel from "./components/LeftSidePanel";
+import PanelResizeHandle from "./components/PanelResizeHandle";
 import PlusMenu from "./components/PlusMenu";
 import PlusMenuButton from "./components/PlusMenuButton";
 import ViewCompass from "./components/ViewCompass";
@@ -41,9 +43,10 @@ import { degToRad, rotatePoint, viewCoverOffset } from "./graph/viewRotation";
 import { directedFlowFrom } from "./graph/flow";
 import { isFiltered, linkEnds, visibleGroupIdsForTree } from "./graph/visibility";
 import { downloadTextFile } from "./export/csv";
-import { buildFullCsv } from "./export/mapExport";
+import { buildFullCsv, flowchartPagesForGroups } from "./export/mapExport";
 import { printDocumentationPdf, printFlowchartPdf } from "./export/print";
 import { useMapSync } from "./hooks/useMapSync";
+import { useResizablePanel } from "./hooks/useResizablePanel";
 import { fetchMap } from "./lib/mapSync";
 import { selectionPanelPlacement } from "./lib/floatPanelPlacement";
 import { DEFAULT_SETTINGS } from "./schema/graph";
@@ -96,6 +99,8 @@ export default function App() {
   const historyOpen = useStore(uiStore, (s) => s.historyOpen);
   const infoOpen = useStore(uiStore, (s) => s.infoOpen);
   const toast = useStore(uiStore, (s) => s.toast);
+  const leftRail = useResizablePanel("left");
+  const editRail = useResizablePanel("edit");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [canvasView, setCanvasView] = useState<"map" | "groups">("map");
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -115,6 +120,7 @@ export default function App() {
   const [highlightOriginId, setHighlightOriginId] = useState<string | null>(null);
   const [draftPrompt, setDraftPrompt] = useState<{ proceed: () => void } | null>(null);
   const [groupDelete, setGroupDelete] = useState<GroupDeleteImpact | null>(null);
+  const [flowchartExportOpen, setFlowchartExportOpen] = useState(false);
   const [groupsRefreshing, setGroupsRefreshing] = useState(false);
   const groupsRefreshingRef = useRef(false);
   const hideFiltered = statusFilters.length > 0 || employeeFilter != null || groupFilters.length > 0;
@@ -354,7 +360,7 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
       if (e.key === "Escape") {
-        if (editLocked || draftPrompt || groupDelete) return;
+        if (editLocked || draftPrompt || groupDelete || flowchartExportOpen) return;
         if (connect || placing) {
           guardDraft(clearInteraction);
           return;
@@ -381,7 +387,7 @@ export default function App() {
         if (!editLocked) redo();
       }
       if (e.key === "Delete") {
-        if (editLocked || editingLinkId || groupDelete) return;
+        if (editLocked || editingLinkId || groupDelete || flowchartExportOpen) return;
         if (canvasView === "groups") {
           if (selectedGroupId) deleteGroupFromTree(selectedGroupId);
           return;
@@ -1032,6 +1038,9 @@ export default function App() {
     };
   }, [picked, selectedIds, links, nodes, size, zoom, viewRotation, settings.enlarge, nodesMoving]);
 
+  const nodeEditFocus = canvasView === "map" && Boolean(editing) && !placing && !connect;
+  const leftRailSize = nodeEditFocus ? editRail : leftRail;
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <Header
@@ -1046,23 +1055,29 @@ export default function App() {
         theme={theme}
         onTheme={(next) => patchUi({ theme: next })}
         onExport={(kind: ExportKind) => {
-          if (kind === "csv") {
-            downloadTextFile(buildFullCsv(nodes, links, groups), "project-process.csv");
-            showToast("Exported CSV");
-            return;
-          }
           if (kind === "flowchart") {
-            printFlowchartPdf(nodes, links);
-            showToast("Opened flowchart print preview");
+            setFlowchartExportOpen(true);
             return;
           }
-          if (kind === "docs") {
-            printDocumentationPdf(nodes, links, groups);
-            showToast("Opened documentation print preview");
-            return;
-          }
-          downloadJson({ nodes, links, groups, settings });
-          showToast("Exported JSON");
+          showToast("Preparing export…");
+          window.setTimeout(() => {
+            try {
+              if (kind === "csv") {
+                downloadTextFile(buildFullCsv(nodes, links, groups), "project-process.csv");
+                showToast("Exported CSV");
+                return;
+              }
+              if (kind === "docs") {
+                printDocumentationPdf(nodes, links, groups);
+                showToast("Opened documentation print preview");
+                return;
+              }
+              downloadJson({ nodes, links, groups, settings });
+              showToast("Exported JSON");
+            } catch {
+              showToast("Export failed");
+            }
+          }, 0);
         }}
         onImport={() => importRef.current?.click()}
         onHistory={toggleHistory}
@@ -1073,92 +1088,12 @@ export default function App() {
         onInfo={toggleInfo}
       />
 
-      <div className="flex min-h-0 min-w-0 flex-1">
-        <div className="flex h-full shrink-0">
-          {canvasView === "groups" || !mapLoading ? (
-          <>
-          <aside className="site-left-rail flex h-full w-[280px] shrink-0 flex-col border-r border-[var(--line)] bg-[var(--card)]">
-            {canvasView === "groups" ? (
-              <GroupTreeInspector
-                groups={groups}
-                nodes={nodes}
-                colorBy={settings.colorBy}
-                search={search}
-                statusFilters={statusFilters}
-                employeeFilter={employeeFilter}
-                groupFilters={groupFilters}
-                onSearch={setSearch}
-                onStatusFilters={setStatusFilters}
-                onEmployeeFilter={setEmployeeFilter}
-                onGroupFilters={setGroupFilters}
-                onClearFilters={clearFilters}
-                onAddRoot={() => addGroup(null)}
-                onUpdateGroup={updateGroup}
-              />
-            ) : (
-            <LeftSidePanel
-              search={search}
-              statusFilters={statusFilters}
-              employeeFilter={employeeFilter}
-              groups={groups}
-              groupFilters={groupFilters}
-              nodes={nodes}
-              settings={settings}
-              colorBy={settings.colorBy}
-              editingNode={editing && !placing && !connect ? editing : null}
-              onSearch={setSearch}
-              onStatusFilters={setStatusFilters}
-              onEmployeeFilter={setEmployeeFilter}
-              onGroupFilters={setGroupFilters}
-              onClearFilters={clearFilters}
-              onSettings={patchSettings}
-              onResetSettings={() => {
-                const next = mergeViewSettings(DEFAULT_SETTINGS);
-                settingsRef.current = next;
-                setSettings(next);
-                graphRef.current?.applyViewForces?.({ rebuildStructure: true, reheat: false });
-              }}
-              onFit={fitGraph}
-              onReorg={reheat}
-              onTogglePhysics={() => {
-                const next = !settings.physics;
-                patchSettings({ physics: next });
-                if (next) persistLayoutAfterReorg.current = true;
-                window.setTimeout(
-                  () => graphRef.current?.applyViewForces?.({ rebuildStructure: true, reheat: next }),
-                  40,
-                );
-              }}
-              onToggleCards={() => setSettings(mergeViewSettings(settings, { cardInfo: !settings.cardInfo }))}
-              onNodeSave={(patch) => {
-                if (editing) updateNode(editing.id, patch);
-              }}
-              onUpdateGroup={updateGroup}
-            />
-            )}
-          </aside>
-          {canvasView === "map" ? (
-          <div className="flex shrink-0 flex-col pt-2 pl-1.5">
-            <PlusMenuButton
-              open={plusOpen}
-              armed={Boolean(placing) || Boolean(connect)}
-              onOpen={(open) => {
-                if (open) {
-                  setMenu(null);
-                  setPicked(null);
-                }
-                setPlusOpen(open);
-              }}
-              onAddNode={(size) => startPlace(undefined, size)}
-              onLink={(arrows) => startLink(arrows)}
-            />
-          </div>
-          ) : null}
-          </>
-          ) : null}
-        </div>
-
-        <div className="stage relative min-h-0 min-w-0 flex-1 overflow-hidden bg-[var(--graph-bg)]" ref={stageRef}>
+      <div className="relative min-h-0 min-w-0 flex-1">
+        <div
+          className="stage relative h-full min-h-0 w-full overflow-hidden bg-[var(--graph-bg)]"
+          ref={stageRef}
+          style={{ ["--map-rail-w" as string]: `${leftRailSize.width}px` }}
+        >
         {canvasView === "groups" ? (
           <GroupTreeCanvas
             groups={groups}
@@ -1310,12 +1245,30 @@ export default function App() {
           />
         </div>
 
+        {canvasView === "map" && !mapLoading && !nodeEditFocus ? (
+          <div className="absolute top-2 z-[10] w-fit pl-1.5" style={{ left: "var(--map-rail-w)" }}>
+            <PlusMenuButton
+              open={plusOpen}
+              armed={Boolean(placing) || Boolean(connect)}
+              onOpen={(open) => {
+                if (open) {
+                  setMenu(null);
+                  setPicked(null);
+                }
+                setPlusOpen(open);
+              }}
+              onAddNode={(size) => startPlace(undefined, size)}
+              onLink={(arrows) => startLink(arrows)}
+            />
+          </div>
+        ) : null}
+
         {!mapLoading ? (
           <ViewCompass degrees={viewRotation} onChange={setViewRotation} onHoldChange={setViewSpinning} />
         ) : null}
 
         {(placing || connect || highlightOriginId || selectedIds.length > 1) && (
-          <div className="absolute top-3 left-1/2 z-[8] -translate-x-1/2 rounded-full bg-[rgba(27,58,107,0.92)] px-3 py-1.5 text-xs font-bold tracking-wide text-[#f3f2f1]">
+          <div className="absolute top-3 left-1/2 z-[8] -translate-x-1/2 rounded-full bg-[rgba(36,50,138,0.94)] px-3 py-1.5 text-xs font-bold tracking-wide text-white">
             {placing
               ? "Click to place a node · Esc to cancel"
               : connect?.from
@@ -1330,7 +1283,96 @@ export default function App() {
 
         </>
         )}
-      </div>
+
+        {canvasView === "groups" || !mapLoading ? (
+          <aside
+            className="site-left-rail absolute top-0 left-0 z-[11] flex h-full flex-col overflow-visible border-r border-[var(--line)] bg-[var(--card)] shadow-[var(--shadow)]"
+            style={{ width: leftRailSize.width }}
+          >
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            {canvasView === "groups" ? (
+              <GroupTreeInspector
+                groups={groups}
+                nodes={nodes}
+                colorBy={settings.colorBy}
+                search={search}
+                statusFilters={statusFilters}
+                employeeFilter={employeeFilter}
+                groupFilters={groupFilters}
+                onSearch={setSearch}
+                onStatusFilters={setStatusFilters}
+                onEmployeeFilter={setEmployeeFilter}
+                onGroupFilters={setGroupFilters}
+                onClearFilters={clearFilters}
+                onAddRoot={() => addGroup(null)}
+                onUpdateGroup={updateGroup}
+              />
+            ) : nodeEditFocus && editing ? (
+              <div
+                className="left-panel-edit is-tinted flex h-full min-h-0 flex-col overflow-hidden"
+                style={{ ["--edit-accent" as string]: nodeColor(editing, settings.colorBy) }}
+              >
+                <EditNodePanel
+                  key={editing.id}
+                  variant="embedded"
+                  node={editing}
+                  nodes={nodes}
+                  groups={groups}
+                  colorBy={settings.colorBy}
+                  onSave={(patch) => updateNode(editing.id, patch)}
+                />
+              </div>
+            ) : (
+              <LeftSidePanel
+                search={search}
+                statusFilters={statusFilters}
+                employeeFilter={employeeFilter}
+                groups={groups}
+                groupFilters={groupFilters}
+                nodes={nodes}
+                settings={settings}
+                colorBy={settings.colorBy}
+                onSearch={setSearch}
+                onStatusFilters={setStatusFilters}
+                onEmployeeFilter={setEmployeeFilter}
+                onGroupFilters={setGroupFilters}
+                onClearFilters={clearFilters}
+                onSettings={patchSettings}
+                onResetSettings={() => {
+                  const next = mergeViewSettings(DEFAULT_SETTINGS);
+                  settingsRef.current = next;
+                  setSettings(next);
+                  graphRef.current?.applyViewForces?.({ rebuildStructure: true, reheat: false });
+                }}
+                onFit={fitGraph}
+                onReorg={reheat}
+                onTogglePhysics={() => {
+                  const next = !settings.physics;
+                  patchSettings({ physics: next });
+                  if (next) persistLayoutAfterReorg.current = true;
+                  window.setTimeout(
+                    () => graphRef.current?.applyViewForces?.({ rebuildStructure: true, reheat: next }),
+                    40,
+                  );
+                }}
+                onToggleCards={() => setSettings(mergeViewSettings(settings, { cardInfo: !settings.cardInfo }))}
+                onUpdateGroup={updateGroup}
+              />
+            )}
+            </div>
+            <PanelResizeHandle
+              side="left"
+              value={leftRailSize.width}
+              min={leftRailSize.min}
+              max={leftRailSize.max}
+              label={nodeEditFocus ? "Resize edit panel" : "Resize side panel"}
+              onChange={leftRailSize.setWidth}
+              onCommit={leftRailSize.commit}
+              onReset={leftRailSize.reset}
+            />
+          </aside>
+        ) : null}
+        </div>
       </div>
 
       {canvasView === "map" && selectedIds.length > 1 && !menu && !editingLink && !connect && !placing && !nodesMoving && (
@@ -1488,6 +1530,31 @@ export default function App() {
           impact={groupDelete}
           onConfirm={confirmDeleteGroup}
           onCancel={() => setGroupDelete(null)}
+        />
+      ) : null}
+
+      {flowchartExportOpen ? (
+        <FlowchartExportModal
+          groups={groups}
+          nodes={nodes}
+          onCancel={() => setFlowchartExportOpen(false)}
+          onExport={(groupIds) => {
+            setFlowchartExportOpen(false);
+            showToast("Preparing export…");
+            window.setTimeout(() => {
+              try {
+                const pages = flowchartPagesForGroups(nodes, links, groups, groupIds);
+                printFlowchartPdf(pages);
+                showToast(
+                  pages.length === 1
+                    ? "Opened flowchart print preview"
+                    : `Opened ${pages.length} flowchart pages`,
+                );
+              } catch {
+                showToast("Export failed");
+              }
+            }, 0);
+          }}
         />
       ) : null}
 

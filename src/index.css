@@ -7,35 +7,38 @@
 }
 
 :root {
-  --omp-header: #1b3a6b;
+  --brand-navy: #24328a;
+  --brand-orange: #f05d2a;
+  --omp-header: #24328a;
   --omp-on-header: #ffffff;
-  --omp-teal: #12a8b8;
+  --omp-teal: #f05d2a;
   --header-btn: rgba(255, 255, 255, 0.14);
   --header-btn-hover: rgba(255, 255, 255, 0.24);
   --font: "Segoe UI", Arial, Helvetica, sans-serif;
-  --graph-bg: #f4f6f8;
-  --panel: #f4f6f8;
+  --graph-bg: #f6f7fb;
+  --panel: #f3f4fa;
   --card: #ffffff;
-  --text: #1b1b1b;
-  --muted: #5b6270;
-  --line: rgba(27, 58, 107, 0.16);
+  --text: #1c1740;
+  --muted: #5a6088;
+  --line: rgba(36, 50, 138, 0.16);
   --input: #ffffff;
-  --hover: rgba(27, 58, 107, 0.1);
-  --accent: #1b3a6b;
-  --shadow: 0 16px 36px rgba(0, 0, 0, 0.28);
+  --hover: rgba(36, 50, 138, 0.08);
+  --accent: #24328a;
+  --shadow: 0 16px 36px rgba(35, 26, 75, 0.16);
 }
 
 html[data-theme="dark"] {
-  --graph-bg: #1a1a1a;
-  --panel: #221f1e;
-  --card: #2b2928;
-  --text: #f3f2f1;
-  --muted: #c8c6c4;
-  --line: #484644;
-  --input: #323130;
+  --omp-header: #1b143c;
+  --graph-bg: #231a4b;
+  --panel: #2a2156;
+  --card: #312856;
+  --text: #f7f6fb;
+  --muted: #c4bdd6;
+  --line: rgba(255, 255, 255, 0.14);
+  --input: #2a2154;
   --hover: rgba(255, 255, 255, 0.08);
-  --accent: #8ab4f8;
-  --shadow: 0 16px 36px rgba(0, 0, 0, 0.5);
+  --accent: #f05d2a;
+  --shadow: 0 16px 36px rgba(0, 0, 0, 0.45);
 }
 
 @layer base {
@@ -61,6 +64,10 @@ html[data-theme="dark"] {
   .omp-header ::selection {
     background: rgba(255, 255, 255, 0.35);
     color: #ffffff;
+  }
+
+  .omp-header {
+    box-shadow: inset 0 -3px 0 var(--brand-orange);
   }
 }
 
@@ -101,12 +108,18 @@ html[data-theme="dark"] {
   transition: transform 0.18s ease;
 }
 .theme-switch input:checked + .theme-slider {
-  background: #323130;
-  border-color: #8a8886;
+  background: #231a4b;
+  border-color: #f05d2a;
 }
 .theme-switch input:checked + .theme-slider::after {
   transform: translateX(16px);
-  background: #f3f2f1;
+  background: #f05d2a;
+}
+
+body.is-panel-resizing,
+body.is-panel-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 
 .edit-float {

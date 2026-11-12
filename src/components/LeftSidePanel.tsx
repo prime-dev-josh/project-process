@@ -1,10 +1,6 @@
-import type { CSSProperties } from "react";
-import { nodeColor } from "../graph/colors";
 import type { WorkflowStatus } from "../graph/workflowStatus";
 import { handleOverlayWheel } from "../lib/overlayScroll";
-import { cx } from "../styles";
 import type { ColorBy, GraphGroup, GraphNode, GraphSettings } from "../types";
-import EditNodePanel, { type NodeEditPatch } from "./EditNodePanel";
 import FilterPanel from "./FilterPanel";
 
 type Props = {
@@ -16,7 +12,6 @@ type Props = {
   nodes: GraphNode[];
   settings: GraphSettings;
   colorBy: ColorBy;
-  editingNode: GraphNode | null;
   onSearch: (v: string) => void;
   onStatusFilters: (v: WorkflowStatus[]) => void;
   onEmployeeFilter: (v: string | null) => void;
@@ -28,7 +23,6 @@ type Props = {
   onReorg: () => void;
   onTogglePhysics: () => void;
   onToggleCards: () => void;
-  onNodeSave: (patch: Partial<NodeEditPatch>) => void;
   onUpdateGroup: (groupId: string, patch: { title?: string; color?: string }) => void;
 };
 
@@ -41,7 +35,6 @@ export default function LeftSidePanel({
   nodes,
   settings,
   colorBy,
-  editingNode,
   onSearch,
   onStatusFilters,
   onEmployeeFilter,
@@ -53,29 +46,8 @@ export default function LeftSidePanel({
   onReorg,
   onTogglePhysics,
   onToggleCards,
-  onNodeSave,
   onUpdateGroup,
 }: Props) {
-  const accent = editingNode ? nodeColor(editingNode, colorBy) : undefined;
-
-  const viewReplacement = editingNode ? (
-    <div
-      className={cx("left-panel-edit is-tinted flex min-h-0 flex-1 flex-col overflow-hidden")}
-      style={accent ? ({ ["--edit-accent" as string]: accent } as CSSProperties) : undefined}
-    >
-      <EditNodePanel
-        key={editingNode.id}
-        embedded
-        node={editingNode}
-        nodes={nodes}
-        groups={groups}
-        colorBy={colorBy}
-        onSave={onNodeSave}
-        onUpdateGroup={onUpdateGroup}
-      />
-    </div>
-  ) : undefined;
-
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--card)]">
       <div className="left-panel-top flex min-h-0 flex-1 flex-col overflow-hidden" onWheel={handleOverlayWheel}>
@@ -99,9 +71,7 @@ export default function LeftSidePanel({
           onReorg={onReorg}
           onTogglePhysics={onTogglePhysics}
           onToggleCards={onToggleCards}
-          selectedNodeId={editingNode?.id ?? null}
           onUpdateGroup={onUpdateGroup}
-          viewReplacement={viewReplacement}
         />
       </div>
     </div>

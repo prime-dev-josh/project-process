@@ -30,20 +30,22 @@ export type NodeEditPatch = {
   groupId: string | null;
 };
 
+export type EditNodePanelVariant = "float" | "embedded";
+
 type Props = {
   node: GraphNode;
   nodes: GraphNode[];
   groups: GraphGroup[];
   colorBy: ColorBy;
-  embedded?: boolean;
+  variant?: EditNodePanelVariant;
   style?: CSSProperties;
   onSave: (patch: Partial<NodeEditPatch>) => void;
-  onUpdateGroup?: (groupId: string, patch: { title?: string; color?: string }) => void;
 };
 
 const SAVED_FLASH_MS = 1600;
+const editSectionLabel = cx(fieldLabel, "mt-0 mb-0");
 
-export default function EditNodePanel({ node, nodes, groups, colorBy, embedded = false, style, onSave, onUpdateGroup }: Props) {
+export default function EditNodePanel({ node, nodes, groups, colorBy, variant = "float", style, onSave }: Props) {
   const accent = nodeColor(node, colorBy);
   const unsaved = useStore(draftStore, (s) => s.labels);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -66,27 +68,12 @@ export default function EditNodePanel({ node, nodes, groups, colorBy, embedded =
       ? { tone: "text-emerald-500", text: "Saved" }
       : { tone: "text-[var(--muted)]", text: "All changes saved" };
 
-  return (
-    <div
-      className={
-        embedded
-          ? "min-h-0 flex-1 overflow-y-auto overscroll-contain p-3"
-          : `${editFloat} is-tinted left-3 bottom-3 max-h-[calc(100vh-76px)] overflow-auto`
-      }
-      style={embedded ? style : { ...style, ["--edit-accent" as string]: accent }}
-      onWheel={handleOverlayWheel}
-    >
-      <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h3 className="m-0 text-lg font-bold">Modify Node</h3>
-        <span className={cx("text-[11px] font-semibold", status.tone)} role="status" aria-live="polite">
-          {status.text}
-        </span>
-      </div>
-
-      <label className={fieldLabel}>
+  const statusSection = (
+    <section className="flex min-w-0 flex-col gap-2">
+      <label className={editSectionLabel}>
         Status <span className="font-normal normal-case tracking-normal">· saves instantly</span>
       </label>
-      <div className="mt-2.5 flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-1.5">
         {WORKFLOW_STATUS_META.map(({ id, label }) => {
           const c = STATUS_COLORS[id];
           const active = nodeWorkflowStatus(node, colorBy) === id;
@@ -104,7 +91,12 @@ export default function EditNodePanel({ node, nodes, groups, colorBy, embedded =
           );
         })}
       </div>
-      <label className={fieldLabel} htmlFor={`title-${node.id}`}>
+    </section>
+  );
+
+  const titleSection = (
+    <section className="flex min-w-0 flex-col gap-2">
+      <label className={editSectionLabel} htmlFor={`title-${node.id}`}>
         Title <span className="font-normal normal-case tracking-normal">· Enter to save, Esc to reset</span>
       </label>
       <DeferredTextField
@@ -114,7 +106,12 @@ export default function EditNodePanel({ node, nodes, groups, colorBy, embedded =
         value={node.title}
         onCommit={(title) => save({ title })}
       />
-      <label className={fieldLabel} htmlFor={`desc-${node.id}`}>
+    </section>
+  );
+
+  const descriptionSection = (
+    <section className="flex min-w-0 flex-col gap-2">
+      <label className={editSectionLabel} htmlFor={`desc-${node.id}`}>
         Description <span className="font-normal normal-case tracking-normal">· Ctrl+Enter to save</span>
       </label>
       <DeferredTextField
@@ -122,10 +119,16 @@ export default function EditNodePanel({ node, nodes, groups, colorBy, embedded =
         label="Description"
         multiline
         className={fieldArea}
+        rows={3}
         value={node.description}
         onCommit={(description) => save({ description })}
       />
-      <label className={fieldLabel}>
+    </section>
+  );
+
+  const employeeSection = (
+    <section className="flex min-w-0 flex-col gap-2">
+      <label className={editSectionLabel}>
         Assigned employee <span className="font-normal normal-case tracking-normal">· saves instantly</span>
       </label>
       <EmployeePicker
@@ -133,7 +136,12 @@ export default function EditNodePanel({ node, nodes, groups, colorBy, embedded =
         email={node.employeeEmail ?? ""}
         onChange={(next) => save({ employee: next.name, employeeEmail: next.email })}
       />
-      <label className={fieldLabel}>
+    </section>
+  );
+
+  const groupSection = (
+    <section className="flex min-w-0 flex-col gap-2">
+      <label className={editSectionLabel}>
         Group <span className="font-normal normal-case tracking-normal">· saves instantly</span>
       </label>
       <GroupPicker
@@ -143,12 +151,45 @@ export default function EditNodePanel({ node, nodes, groups, colorBy, embedded =
         onChange={(groupId) => {
           if ((node.groupId ?? null) !== groupId) save({ groupId });
         }}
-        onUpdateGroup={onUpdateGroup}
       />
-      <label className={fieldLabel}>
+    </section>
+  );
+
+  const classSection = (
+    <section className="flex min-w-0 flex-col gap-2">
+      <label className={editSectionLabel}>
         Class <span className="font-normal normal-case tracking-normal">· saves instantly</span>
       </label>
       <ClassPicker value={node.size} onSelect={(size) => save({ size })} />
+    </section>
+  );
+
+  const shellClass =
+    variant === "embedded"
+      ? "min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-4"
+      : `${editFloat} is-tinted left-3 bottom-3 max-h-[calc(100vh-76px)] overflow-auto`;
+
+  return (
+    <div
+      className={shellClass}
+      style={{ ...style, ["--edit-accent" as string]: accent }}
+      onWheel={handleOverlayWheel}
+    >
+      <div className="mb-3 flex min-w-0 items-baseline justify-between gap-2">
+        <h3 className="m-0 shrink-0 text-lg font-bold">Modify Node</h3>
+        <span className={cx("truncate text-[11px] font-semibold", status.tone)} role="status" aria-live="polite">
+          {status.text}
+        </span>
+      </div>
+
+      <div className="flex min-w-0 flex-col gap-5">
+        {statusSection}
+        {titleSection}
+        {descriptionSection}
+        {employeeSection}
+        {groupSection}
+        {classSection}
+      </div>
     </div>
   );
 }

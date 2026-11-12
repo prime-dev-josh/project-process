@@ -860,7 +860,7 @@ function GraphCanvas({
       const rect = host.getBoundingClientRect();
       if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
       const target = e.target as HTMLElement | null;
-      if (target?.closest(".plus-wrap, .filter-panel, .canvas-tools, .view-compass, .history-panel, .info-panel, .item-actions, .edit-float, .ctx, .omp-header")) return;
+      if (target?.closest(".plus-wrap, .filter-panel, .site-left-rail, .panel-resize, .canvas-tools, .view-compass, .history-panel, .info-panel, .item-actions, .edit-float, .ctx, .omp-header")) return;
       onPlace(graphAtClient(e.clientX, e.clientY));
     };
     window.addEventListener("pointerup", onUp, true);
@@ -1568,7 +1568,7 @@ function GraphCanvas({
         const handledByFg = fgContextHandled.current;
         fgContextHandled.current = false;
         const target = e.target as HTMLElement | null;
-        if (target?.closest(".plus-wrap, .filter-panel, .site-left-rail, .left-panel-top, .left-panel-bottom, .canvas-tools, .view-compass, .history-panel, .info-panel, .item-actions, .edit-float, .ctx, .omp-header")) return;
+        if (target?.closest(".plus-wrap, .filter-panel, .site-left-rail, .left-panel-top, .left-panel-bottom, .node-edit-dock, .panel-resize, .canvas-tools, .view-compass, .history-panel, .info-panel, .item-actions, .edit-float, .ctx, .omp-header")) return;
         if (handledByFg) return;
 
         const node = nodeAt(e.clientX, e.clientY);
@@ -1601,7 +1601,7 @@ function GraphCanvas({
         if (e.button !== 0) return;
         if (spaceHeld.current || e.altKey) return;
         const target = e.target as HTMLElement | null;
-        if (target?.closest(".plus-wrap, .filter-panel, .site-left-rail, .left-panel-top, .left-panel-bottom, .canvas-tools, .view-compass, .history-panel, .info-panel, .item-actions, .edit-float, .ctx, .omp-header")) return;
+        if (target?.closest(".plus-wrap, .filter-panel, .site-left-rail, .left-panel-top, .left-panel-bottom, .node-edit-dock, .panel-resize, .canvas-tools, .view-compass, .history-panel, .info-panel, .item-actions, .edit-float, .ctx, .omp-header")) return;
         const badgeId = deselectBadgeAt(e.clientX, e.clientY);
         if (badgeId) {
           skipBg.current = true;

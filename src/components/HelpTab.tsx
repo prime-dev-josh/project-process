@@ -217,7 +217,7 @@ export default function HelpTab() {
         <div className="grid grid-cols-2 gap-1.5">
           <Card icon={<IcoAdd />} title="Add a node" body={<>Hover or click <Key>+</Key>, or press <Key>N</Key>. Pick Start, General, or End — play triangle, circle, or stop square.</>} />
           <Card icon={<IcoLink />} title="Add a link" body="From + or a node menu, pick an arrow type, then single-click two nodes anywhere on the ball. The target ring highlights as you hover." />
-          <Card icon={<IcoEdit />} title="Edit a node" body="Click a ball — the left panel opens. Status, person, group, and class (Start play triangle, General circle, End stop square) save instantly; Title and Description save with Enter / Ctrl+Enter or the check button." />
+          <Card icon={<IcoEdit />} title="Edit a node" body="Click a ball — the left rail switches to Modify Node and uses the full panel height. Status, person, group, and class (Start play triangle, General circle, End stop square) save instantly; Title and Description save with Enter / Ctrl+Enter or the check button. Click away or Esc to return to filters and view settings." />
           <Card icon={<IcoAdd />} title="Child nodes" body="Adding from a node's menu links the new node with a one-way arrow from the original and copies that node's group and assignee." />
           <Card icon={<IcoLink />} title="Edit a link" body="Right-click a connection to flip, change arrows, insert, or delete." />
           <Card icon={<IcoSelect />} title="Name a group" body="Switch the header to Groups to build the tree. Folders only organize it; create assignable groups there, then pick them from a node or a multi-select. Set None to ungroup. Each group keeps a hex color — right-click it in the Groups list to edit name and color. A colored membrane wraps the members, with the group name on the rim." />
@@ -254,7 +254,7 @@ export default function HelpTab() {
           <Card icon={<IcoLive />} title="Sync updates" body="The bell (bottom right) lists other people's changes. Filter them, mark them read, or click Show to jump to a node." />
           <Card icon={<IcoLive />} title="Offline queue" body="If saving fails, unsaved changes queue above the bell and retry automatically. Use Retry now or Discard if it stays stuck." />
           <Card icon={<IcoHistory />} title="Undo" body={<>Header arrows, or <Key>Ctrl/Cmd+Z</Key> / <Key>Y</Key>. History is local; writes still sync.</>} />
-          <Card icon={<IcoView />} title="Export" body="Export opens a menu: Full CSV of nodes, groups, and links (with hierarchy paths); a landscape flowchart PDF (Start / process / End boxes from node class and connections); a documentation PDF with a table of contents from the node tree, group folders, and links; or JSON for a full map file. Choose Save as PDF in the print dialog." />
+          <Card icon={<IcoView />} title="Export" body="Export opens a menu: Full CSV of nodes, groups, and links (with hierarchy paths); a portrait flowchart PDF with one or more pages per selected group (top-down boxes, full titles, the group name on the left rail); a portrait documentation PDF laid out as a textbook (contents with dotted leaders, then one section per group); or JSON for a full map file. Choose Save as PDF in the print dialog." />
         </div>
       </section>
 

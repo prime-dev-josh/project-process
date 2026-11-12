@@ -11,8 +11,8 @@ type Props = {
 
 const OPTIONS: { id: ExportKind; title: string; hint: string }[] = [
   { id: "csv", title: "Full CSV", hint: "Map and group hierarchy" },
-  { id: "flowchart", title: "Flowchart PDF", hint: "Traditional process chart" },
-  { id: "docs", title: "Documentation PDF", hint: "Table of contents from nodes, groups, and links" },
+  { id: "flowchart", title: "Flowchart PDF", hint: "One page per group" },
+  { id: "docs", title: "Documentation PDF", hint: "Portrait textbook with contents" },
   { id: "json", title: "JSON", hint: "Full map file" },
 ];
 
