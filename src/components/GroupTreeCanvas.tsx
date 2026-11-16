@@ -13,14 +13,28 @@ import { cx, dangerText, field, ghostBtn, primaryBtn, toolBtn } from "../styles"
 import type { GraphGroup, GraphNode } from "../types";
 import HexColorField from "./HexColorField";
 
-const BOX_W = 200;
+const BOX_W = 188;
 const BOX_H = 48;
 const EDIT_BOX_W = 252;
 const EDIT_BOX_H = 224;
-const V_GAP = 72;
-const SIB_GAP = 28;
+const V_GAP = 56;
+const SIB_GAP = 16;
+const SIB_DIST = BOX_W + SIB_GAP;
+const FOREST_ROOT = "\0forest";
 
 type Box = { id: string; x: number; y: number };
+type LayoutNode = {
+  id: string;
+  children: LayoutNode[];
+  parent: LayoutNode | null;
+  prelim: number;
+  mod: number;
+  shift: number;
+  change: number;
+  thread: LayoutNode | null;
+  ancestor: LayoutNode;
+  index: number;
+};
 export type GroupTreeDrop =
   | { kind: "child"; parentId: string }
   | { kind: "adopt"; childId: string }
@@ -47,61 +61,190 @@ type Props = {
   refreshing?: boolean;
   /** When set, groups not in the set render at 50% opacity. */
   filterVisibleIds: Set<string> | null;
+  /** Pixels covered on the left by the side panel. Fit frames the visible remainder. */
+  obscuredLeft?: number;
 };
 
-function layoutForest(groups: GraphGroup[]): Box[] {
-  const widthOf = new Map<string, number>();
-  const measure = (id: string, stack: Set<string>): number => {
-    const cached = widthOf.get(id);
-    if (cached != null) return cached;
-    if (stack.has(id)) return BOX_W;
-    const next = new Set(stack);
-    next.add(id);
-    const kids = childrenOf(groups, id).filter((kid) => !next.has(kid.id));
-    const width = kids.length
-      ? Math.max(
-          BOX_W,
-          kids.reduce((sum, kid, index) => sum + measure(kid.id, next) + (index ? SIB_GAP : 0), 0),
-        )
-      : BOX_W;
-    widthOf.set(id, width);
-    return width;
+function layoutNode(): LayoutNode {
+  const node = {
+    id: "",
+    children: [] as LayoutNode[],
+    parent: null as LayoutNode | null,
+    prelim: 0,
+    mod: 0,
+    shift: 0,
+    change: 0,
+    thread: null as LayoutNode | null,
+    ancestor: null as unknown as LayoutNode,
+    index: 0,
   };
+  node.ancestor = node;
+  return node;
+}
 
-  const boxes: Box[] = [];
-  const placed = new Set<string>();
-  const place = (id: string, left: number, depth: number, stack: Set<string>) => {
-    if (placed.has(id) || stack.has(id)) return;
-    placed.add(id);
-    const next = new Set(stack);
-    next.add(id);
-    const width = measure(id, stack);
-    boxes.push({ id, x: left + (width - BOX_W) / 2, y: depth * (BOX_H + V_GAP) });
-    const kids = childrenOf(groups, id).filter((kid) => !next.has(kid.id));
-    if (!kids.length) return;
-    const kidsWidth = kids.reduce((sum, kid, index) => sum + measure(kid.id, next) + (index ? SIB_GAP : 0), 0);
-    let cursor = left + (width - kidsWidth) / 2;
-    for (const kid of kids) {
-      place(kid.id, cursor, depth + 1, next);
-      cursor += measure(kid.id, next) + SIB_GAP;
+function leftSibling(node: LayoutNode) {
+  return node.parent && node.index > 0 ? node.parent.children[node.index - 1] : undefined;
+}
+
+function nextLeft(node: LayoutNode) {
+  return node.children[0] ?? node.thread ?? undefined;
+}
+
+function nextRight(node: LayoutNode) {
+  return node.children[node.children.length - 1] ?? node.thread ?? undefined;
+}
+
+function moveSubtree(innerLeft: LayoutNode, innerRight: LayoutNode, shift: number) {
+  const subtrees = innerRight.index - innerLeft.index;
+  if (subtrees <= 0) return;
+  innerRight.change -= shift / subtrees;
+  innerRight.shift += shift;
+  innerLeft.change += shift / subtrees;
+  innerRight.prelim += shift;
+  innerRight.mod += shift;
+}
+
+function ancestorOf(innerLeft: LayoutNode, child: LayoutNode, fallback: LayoutNode) {
+  return innerLeft.ancestor.parent === child.parent ? innerLeft.ancestor : fallback;
+}
+
+function executeShifts(node: LayoutNode) {
+  let shift = 0;
+  let change = 0;
+  for (let index = node.children.length - 1; index >= 0; index -= 1) {
+    const child = node.children[index];
+    child.prelim += shift;
+    child.mod += shift;
+    change += child.change;
+    shift += child.shift + change;
+  }
+}
+
+function apportion(child: LayoutNode, fallback: LayoutNode) {
+  const sibling = leftSibling(child);
+  if (!sibling || !child.parent) return fallback;
+  let innerRight = child;
+  let outerRight = child;
+  let innerLeft: LayoutNode = sibling;
+  let outerLeft = child.parent.children[0];
+  let innerRightMod = child.mod;
+  let outerRightMod = child.mod;
+  let innerLeftMod = innerLeft.mod;
+  let outerLeftMod = outerLeft.mod;
+  while (nextRight(innerLeft) && nextLeft(innerRight)) {
+    innerLeft = nextRight(innerLeft)!;
+    innerRight = nextLeft(innerRight)!;
+    outerLeft = nextLeft(outerLeft)!;
+    outerRight = nextRight(outerRight)!;
+    outerRight.ancestor = child;
+    const shift = innerLeft.prelim + innerLeftMod - (innerRight.prelim + innerRightMod) + SIB_DIST;
+    if (shift > 0) {
+      moveSubtree(ancestorOf(innerLeft, child, fallback), child, shift);
+      innerRightMod += shift;
+      outerRightMod += shift;
     }
+    innerLeftMod += innerLeft.mod;
+    innerRightMod += innerRight.mod;
+    outerLeftMod += outerLeft.mod;
+    outerRightMod += outerRight.mod;
+  }
+  if (nextRight(innerLeft) && !nextRight(outerRight)) {
+    outerRight.thread = nextRight(innerLeft)!;
+    outerRight.mod += innerLeftMod - outerRightMod;
+  }
+  if (nextLeft(innerRight) && !nextLeft(outerLeft)) {
+    outerLeft.thread = nextLeft(innerRight)!;
+    outerLeft.mod += innerRightMod - outerLeftMod;
+    return child;
+  }
+  return fallback;
+}
+
+function firstWalk(node: LayoutNode) {
+  if (!node.children.length) {
+    const sibling = leftSibling(node);
+    node.prelim = sibling ? sibling.prelim + SIB_DIST : 0;
+    return;
+  }
+  let fallback = node.children[0];
+  for (const child of node.children) {
+    firstWalk(child);
+    fallback = apportion(child, fallback);
+  }
+  executeShifts(node);
+  const midpoint = (node.children[0].prelim + node.children[node.children.length - 1].prelim) / 2;
+  const sibling = leftSibling(node);
+  if (sibling) {
+    node.prelim = sibling.prelim + SIB_DIST;
+    node.mod = node.prelim - midpoint;
+  } else {
+    node.prelim = midpoint;
+  }
+}
+
+function secondWalk(node: LayoutNode, offset: number, depth: number, boxes: Box[]) {
+  if (node.id !== FOREST_ROOT) {
+    boxes.push({ id: node.id, x: node.prelim + offset, y: depth * (BOX_H + V_GAP) });
+  }
+  const nextDepth = node.id === FOREST_ROOT ? 0 : depth + 1;
+  for (const child of node.children) secondWalk(child, offset + node.mod, nextDepth, boxes);
+}
+
+function hiddenByCollapse(groups: GraphGroup[], collapsedIds: Set<string>) {
+  const hidden = new Set<string>();
+  for (const id of collapsedIds) {
+    for (const desc of subtreeIds(groups, id)) {
+      if (desc !== id) hidden.add(desc);
+    }
+  }
+  return hidden;
+}
+
+function buildLayoutTree(groups: GraphGroup[]) {
+  const make = (id: string, parent: LayoutNode | null, index: number, stack: Set<string>) => {
+    const node = layoutNode();
+    node.id = id;
+    node.parent = parent;
+    node.index = index;
+    if (stack.has(id)) return node;
+    const next = new Set(stack);
+    next.add(id);
+    node.children = childrenOf(groups, id)
+      .filter((kid) => !next.has(kid.id))
+      .map((kid, kidIndex) => make(kid.id, node, kidIndex, next));
+    return node;
   };
 
-  let cursor = 0;
-  const placeRoot = (id: string) => {
-    place(id, cursor, 0, new Set());
-    cursor += measure(id, new Set()) + SIB_GAP;
+  const forest = layoutNode();
+  forest.id = FOREST_ROOT;
+  const seen = new Set<string>();
+  const addRoot = (id: string) => {
+    if (seen.has(id)) return;
+    const node = make(id, forest, forest.children.length, new Set());
+    forest.children.push(node);
+    for (const desc of subtreeIds(groups, id)) seen.add(desc);
   };
-  for (const root of rootGroups(groups)) placeRoot(root.id);
-  for (const group of groups) {
-    if (!placed.has(group.id)) placeRoot(group.id);
+  for (const root of rootGroups(groups)) addRoot(root.id);
+  for (const group of groups) addRoot(group.id);
+  return forest;
+}
+
+function layoutForest(groups: GraphGroup[]): Box[] {
+  if (!groups.length) return [];
+  const root = buildLayoutTree(groups);
+  firstWalk(root);
+  const boxes: Box[] = [];
+  secondWalk(root, 0, 0, boxes);
+  const minX = boxes.reduce((min, box) => Math.min(min, box.x), 0);
+  if (minX !== 0) {
+    for (const box of boxes) box.x -= minX;
   }
   return boxes;
 }
 
 function clip(title: string) {
   const text = groupTitle(title);
-  return text.length > 26 ? `${text.slice(0, 25)}…` : text;
+  return text.length > 24 ? `${text.slice(0, 23)}…` : text;
 }
 
 function nodeCountLabel(count: number) {
@@ -131,12 +274,14 @@ export default function GroupTreeCanvas({
   onRefresh,
   refreshing = false,
   filterVisibleIds,
+  obscuredLeft = 0,
 }: Props) {
   const dimTree = (id: string) => filterVisibleIds !== null && !filterVisibleIds.has(id);
   const rootRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState({ x: 48, y: 48 });
   const [zoom, setZoom] = useState(1);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
   const boxHeight = (id: string) => (editingId === id ? EDIT_BOX_H : BOX_H);
   const [drag, setDrag] = useState<{ id: string; x: number; y: number; drop: Drop | null } | null>(null);
   const [middlePan, setMiddlePan] = useState(false);
@@ -169,19 +314,26 @@ export default function GroupTreeCanvas({
   const boxes = useMemo(() => layoutForest(groups), [groups]);
   const boxById = useMemo(() => new Map(boxes.map((box) => [box.id, box])), [boxes]);
   const byId = useMemo(() => new Map(groups.map((group) => [group.id, group])), [groups]);
+  const hiddenIds = useMemo(() => hiddenByCollapse(groups, collapsedIds), [groups, collapsedIds]);
+  const visibleBoxes = useMemo(() => boxes.filter((box) => !hiddenIds.has(box.id)), [boxes, hiddenIds]);
+
+  useEffect(() => {
+    if (editingId && hiddenIds.has(editingId)) setEditingId(null);
+  }, [editingId, hiddenIds]);
 
   const edges = useMemo(() => {
     const paths: { key: string; d: string }[] = [];
     for (const group of groups) {
       const parent = boxById.get(group.id);
+      if (!parent || hiddenIds.has(group.id) || collapsedIds.has(group.id)) continue;
       const kids = childrenOf(groups, group.id);
-      if (!parent || !kids.length) continue;
+      if (!kids.length) continue;
       const x1 = parent.x + BOX_W / 2;
       const y1 = parent.y + BOX_H;
       const busY = y1 + V_GAP / 2;
       for (const kid of kids) {
         const child = boxById.get(kid.id);
-        if (!child) continue;
+        if (!child || hiddenIds.has(kid.id)) continue;
         const x2 = child.x + BOX_W / 2;
         paths.push({
           key: `${group.id}->${kid.id}`,
@@ -190,7 +342,7 @@ export default function GroupTreeCanvas({
       }
     }
     return paths;
-  }, [groups, boxById]);
+  }, [groups, boxById, collapsedIds, hiddenIds]);
 
   function toGraph(clientX: number, clientY: number) {
     const rect = rootRef.current?.getBoundingClientRect();
@@ -202,7 +354,7 @@ export default function GroupTreeCanvas({
   }
 
   function boxHits(gx: number, gy: number, dragId: string) {
-    return boxes
+    return visibleBoxes
       .filter(
         (box) =>
           box.id !== dragId &&
@@ -244,7 +396,7 @@ export default function GroupTreeCanvas({
       return { kind: "child", parentId: hit.id };
     }
 
-    for (const box of boxes) {
+    for (const box of visibleBoxes) {
       if (box.id === id || blocked.has(box.id)) continue;
       const bandTop = box.y + BOX_H;
       const bandBottom = box.y + BOX_H + V_GAP * 0.62;
@@ -256,7 +408,7 @@ export default function GroupTreeCanvas({
     if (gy < -16) return { kind: "root" };
 
     const rows = new Map<string, Box[]>();
-    for (const box of boxes) {
+    for (const box of visibleBoxes) {
       if (box.id === id) continue;
       const parentKey = byId.get(box.id)?.parentId ?? "";
       const row = rows.get(parentKey) ?? [];
@@ -303,10 +455,15 @@ export default function GroupTreeCanvas({
     const width = Math.max(1, maxX - minX);
     const height = Math.max(1, maxY - minY);
     const pad = 56;
-    const nextZoom = Math.min(1.6, Math.max(0.08, Math.min((el.clientWidth - pad * 2) / width, (el.clientHeight - pad * 2) / height)));
+    const inset = Math.min(Math.max(0, obscuredLeft), Math.max(0, el.clientWidth - 80));
+    const viewW = Math.max(1, el.clientWidth - inset);
+    const nextZoom = Math.min(
+      1.6,
+      Math.max(0.08, Math.min(Math.max(1, viewW - pad * 2) / width, Math.max(1, el.clientHeight - pad * 2) / height)),
+    );
     setZoom(nextZoom);
     setPan({
-      x: (el.clientWidth - width * nextZoom) / 2 - minX * nextZoom,
+      x: inset + (viewW - width * nextZoom) / 2 - minX * nextZoom,
       y: (el.clientHeight - height * nextZoom) / 2 - minY * nextZoom,
     });
   }
@@ -328,6 +485,7 @@ export default function GroupTreeCanvas({
     return () => el.removeEventListener("wheel", onWheel);
   }, [pan, zoom]);
 
+  const structureSig = groups.map((group) => `${group.id}:${group.parentId ?? ""}`).sort().join("|");
   const didFit = useRef(false);
   const lastFitSig = useRef("");
   const fitRef = useRef(fit);
@@ -338,20 +496,19 @@ export default function GroupTreeCanvas({
     const observer = new ResizeObserver(() => {
       if (didFit.current || !boxes.length || el.clientWidth < 40 || el.clientHeight < 40) return;
       didFit.current = true;
-      lastFitSig.current = `${boxes.length}:${groups.length}`;
+      lastFitSig.current = structureSig;
       fitRef.current();
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [boxes.length, groups.length]);
+  }, [boxes.length, structureSig]);
 
   useEffect(() => {
     if (!boxes.length) return;
-    const sig = `${boxes.length}:${groups.length}`;
-    if (sig === lastFitSig.current) return;
-    lastFitSig.current = sig;
+    if (structureSig === lastFitSig.current) return;
+    lastFitSig.current = structureSig;
     fitRef.current();
-  }, [boxes, groups.length]);
+  }, [boxes, structureSig]);
 
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
@@ -382,11 +539,30 @@ export default function GroupTreeCanvas({
     onSelect(id);
   }
 
+  function toggleCollapsed(id: string) {
+    setCollapsedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function addChildVisible(id: string) {
+    setCollapsedIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    onAddChild(id);
+  }
+
   function onPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0 && event.button !== 1) return;
     const target = event.target as Element;
     const forcePan = chordPan(event);
-    if (!forcePan && target.closest?.("[data-group-edit], [data-edit-trigger], [data-group-editing]")) return;
+    if (!forcePan && target.closest?.("[data-group-edit], [data-edit-trigger], [data-group-action], [data-group-editing]")) return;
     const id = target.closest?.("[data-group-id]")?.getAttribute("data-group-id") ?? null;
     if (!forcePan && editingId && id !== editingId) setEditingId(null);
     if (!forcePan && editingId === id) return;
@@ -524,13 +700,13 @@ export default function GroupTreeCanvas({
               );
             })}
             {drag?.drop?.kind === "reorder" ? (
-              <ReorderMark groups={groups} boxes={boxes} dragId={drag.id} parentId={drag.drop.parentId} beforeId={drag.drop.beforeId} />
+              <ReorderMark groups={groups} boxes={visibleBoxes} dragId={drag.id} parentId={drag.drop.parentId} beforeId={drag.drop.beforeId} />
             ) : null}
             {drag?.drop?.kind === "child" ? (
-              <ChildDropHint boxes={boxes} parentId={drag.drop.parentId} />
+              <ChildDropHint boxes={visibleBoxes} parentId={drag.drop.parentId} />
             ) : null}
             {drag?.drop?.kind === "adopt" ? (
-              <AdoptDropHint boxes={boxes} childId={drag.drop.childId} />
+              <AdoptDropHint boxes={visibleBoxes} childId={drag.drop.childId} />
             ) : null}
             {drag ? (
               <rect
@@ -544,7 +720,7 @@ export default function GroupTreeCanvas({
                 strokeDasharray="4 3"
               />
             ) : null}
-            {boxes.map((box) => {
+            {visibleBoxes.map((box) => {
               const group = byId.get(box.id);
               if (!group || drag?.id === box.id || editingId === group.id) return null;
               return (
@@ -560,6 +736,11 @@ export default function GroupTreeCanvas({
                     (drag?.drop?.kind === "adopt" && drag.drop.childId === group.id)
                   }
                   onStartEdit={startEdit}
+                  onAddChild={addChildVisible}
+                  onDelete={onDelete}
+                  collapsed={collapsedIds.has(group.id)}
+                  hiddenChildCount={Math.max(0, subtreeIds(groups, group.id).length - 1)}
+                  onToggleCollapsed={toggleCollapsed}
                 />
               );
             })}
@@ -567,7 +748,7 @@ export default function GroupTreeCanvas({
             {editingId ? (() => {
               const box = boxById.get(editingId);
               const group = byId.get(editingId);
-              if (!box || !group) return null;
+              if (!box || !group || hiddenIds.has(group.id)) return null;
               const layout = editCardLayout(box);
               return (
                 <g
@@ -606,7 +787,7 @@ export default function GroupTreeCanvas({
                     height={layout.h}
                     onRename={onRename}
                     onColor={onColor}
-                    onAddChild={onAddChild}
+                    onAddChild={addChildVisible}
                     onDelete={onDelete}
                     onClose={() => setEditingId(null)}
                   />
@@ -723,6 +904,11 @@ function GroupTreeCard({
   dimmed,
   dropHot,
   onStartEdit,
+  onAddChild,
+  onDelete,
+  collapsed,
+  hiddenChildCount,
+  onToggleCollapsed,
 }: {
   box: Box;
   group: GraphGroup;
@@ -731,6 +917,11 @@ function GroupTreeCard({
   dimmed: boolean;
   dropHot: boolean;
   onStartEdit: (id: string) => void;
+  onAddChild: (parentId: string) => void;
+  onDelete: (groupId: string) => void;
+  collapsed: boolean;
+  hiddenChildCount: number;
+  onToggleCollapsed: (id: string) => void;
 }) {
   const leaf = isLeaf(groups, group.id);
   const color = groupPaintColor(group);
@@ -741,8 +932,8 @@ function GroupTreeCard({
       data-group-id={group.id}
       role="button"
       tabIndex={0}
-      aria-label={`${groupTitle(group.title)}, ${leaf ? "group" : "folder"}, ${nodeCountLabel(count)}`}
-      className="cursor-default"
+      aria-label={`${groupTitle(group.title)}, ${leaf ? "group" : "folder"}, ${nodeCountLabel(count)}${collapsed ? `, ${hiddenChildCount} hidden` : ""}`}
+      className={cx("group-tree-card cursor-default", collapsed && "is-collapsed")}
       opacity={dimmed ? 0.5 : 1}
     >
       <rect
@@ -767,7 +958,7 @@ function GroupTreeCard({
         tabIndex={-1}
         aria-label={`Edit ${groupTitle(group.title)}`}
         className="cursor-pointer"
-        transform={`translate(${box.x + BOX_W - 26} ${box.y + 6})`}
+        transform={`translate(${box.x + BOX_W - 28} ${box.y + 14})`}
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => {
           event.stopPropagation();
@@ -783,7 +974,113 @@ function GroupTreeCard({
           strokeLinejoin="round"
         />
       </g>
+      {leaf ? null : (
+        <g className="group-card-collapse" transform={`translate(${box.x - 9} ${box.y - 9})`}>
+          <CollapseBadge
+            collapsed={collapsed}
+            hiddenCount={hiddenChildCount}
+            title={groupTitle(group.title)}
+            onClick={() => onToggleCollapsed(group.id)}
+          />
+        </g>
+      )}
+      <g className="group-card-delete" transform={`translate(${box.x + BOX_W - 9} ${box.y - 9})`}>
+        <GroupCardBadge
+          label={`Delete ${groupTitle(group.title)}`}
+          glyph="−"
+          fill="#dc2626"
+          onClick={() => onDelete(group.id)}
+        />
+      </g>
+      <g className="group-card-add" transform={`translate(${box.x + BOX_W / 2 - 9} ${box.y + BOX_H - 9})`}>
+        <GroupCardBadge
+          label={`Add a child of ${groupTitle(group.title)}`}
+          glyph="+"
+          fill="var(--accent)"
+          onClick={() => onAddChild(group.id)}
+        />
+      </g>
       <title>{groupPath(groups, group.id).join(" / ")}</title>
+    </g>
+  );
+}
+
+function GroupCardBadge({
+  label,
+  glyph,
+  fill,
+  onClick,
+}: {
+  label: string;
+  glyph: string;
+  fill: string;
+  onClick: () => void;
+}) {
+  return (
+    <g
+      data-group-action
+      role="button"
+      tabIndex={-1}
+      aria-label={label}
+      className="cursor-pointer"
+      onPointerDown={(event) => {
+        event.stopPropagation();
+        event.preventDefault();
+      }}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+    >
+      <circle cx={9} cy={9} r={9} fill={fill} />
+      <text x={9} y={13} textAnchor="middle" fontSize={13} fontWeight={700} fill="#fff">
+        {glyph}
+      </text>
+      <title>{label}</title>
+    </g>
+  );
+}
+
+function CollapseBadge({
+  collapsed,
+  hiddenCount,
+  title,
+  onClick,
+}: {
+  collapsed: boolean;
+  hiddenCount: number;
+  title: string;
+  onClick: () => void;
+}) {
+  const label = collapsed
+    ? `Show ${hiddenCount} hidden group${hiddenCount === 1 ? "" : "s"} under ${title}`
+    : `Hide children of ${title}`;
+  const width = collapsed ? Math.max(22, 16 + String(hiddenCount).length * 7) : 18;
+  return (
+    <g
+      data-group-action
+      role="button"
+      tabIndex={-1}
+      aria-label={label}
+      className="cursor-pointer"
+      onPointerDown={(event) => {
+        event.stopPropagation();
+        event.preventDefault();
+      }}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+    >
+      <rect x={0} y={0} width={width} height={18} rx={9} fill={collapsed ? "var(--accent)" : "var(--text)"} />
+      {collapsed ? (
+        <text x={width / 2} y={13} textAnchor="middle" fontSize={10} fontWeight={700} fill="#fff">
+          {hiddenCount}
+        </text>
+      ) : (
+        <path d="M5 7 L9 12 L13 7" fill="none" stroke="#fff" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
+      )}
+      <title>{label}</title>
     </g>
   );
 }

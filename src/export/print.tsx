@@ -22,46 +22,49 @@ import {
   buildDocumentationBook,
   layoutFlowchartPages,
   wrapFlowchartTitle,
-  type DocBookChapter,
   type DocBookPart,
+  type DocProcess,
+  type DocStep,
   type FlowchartGroupPage,
   type FlowchartLayout,
 } from "./mapExport";
 import { folioFor, recordPage, type PageIndex } from "./pdfFolio";
 
-const NAVY = "#24328a";
-const ORANGE = "#f05d2a";
-const INK = "#1c1740";
-const MUTED = "#5a6088";
-const BLACK = "#0b0b0c";
+const NAVY = "#24338a";
+const ORANGE = "#f15d2a";
+const INK = "#231b4b";
+const MUTED = "#5462ad";
+const DARK = "#231b4b";
 const PAGE_W = 612;
 const PAGE_H = 792;
 
 const styles = StyleSheet.create({
-  cover: { backgroundColor: NAVY, fontFamily: "Helvetica", color: "#ffffff" },
-  masthead: { backgroundColor: BLACK, paddingHorizontal: 40, paddingTop: 28, paddingBottom: 22 },
-  logo: { width: 196 },
+  cover: { backgroundColor: DARK, fontFamily: "Helvetica", color: "#ffffff" },
+  masthead: { backgroundColor: "#ffffff", paddingHorizontal: 40, paddingTop: 28, paddingBottom: 22 },
+  logo: { width: 196, height: 56, objectFit: "contain" },
+  footerLogoWrap: { width: 86, height: 20, justifyContent: "center" },
+  footerLogo: { width: 86, height: 20, objectFit: "contain" },
   wordmark: { fontFamily: "Helvetica-Bold", fontSize: 18, letterSpacing: 3, color: "#ffffff" },
   accent: { height: 6, backgroundColor: ORANGE },
   coverBody: { flex: 1, paddingHorizontal: 40, paddingTop: 48, paddingBottom: 36, justifyContent: "space-between" },
   eyebrow: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 2.4, color: ORANGE },
   coverTitle: { fontFamily: "Helvetica-Bold", fontSize: 34, marginTop: 10, color: "#ffffff" },
   coverRule: { width: 52, height: 3, backgroundColor: ORANGE, marginTop: 14 },
-  coverBlurb: { marginTop: 16, fontSize: 11, lineHeight: 1.4, color: "#d7dcf4", maxWidth: 420 },
+  coverBlurb: { marginTop: 16, fontSize: 11, lineHeight: 1.4, color: "#cecedc", maxWidth: 420 },
   coverStats: { fontSize: 11, color: "#ffffff" },
-  coverDate: { marginTop: 4, fontSize: 9, color: "#b7bddf" },
+  coverDate: { marginTop: 4, fontSize: 9, color: "#cecedc" },
   textPage: {
     fontFamily: "Helvetica",
     color: INK,
     paddingTop: 28,
-    paddingBottom: 40,
+    paddingBottom: 56,
     paddingHorizontal: 36,
   },
   sectionPage: {
     fontFamily: "Helvetica",
     color: INK,
     paddingTop: 28,
-    paddingBottom: 40,
+    paddingBottom: 56,
     paddingLeft: 44,
     paddingRight: 32,
   },
@@ -86,10 +89,12 @@ const styles = StyleSheet.create({
   },
   footerFixed: {
     position: "absolute",
-    bottom: 14,
+    bottom: 16,
     left: 40,
     right: 32,
+    height: 22,
     flexDirection: "row",
+    alignItems: "center",
     justifyContent: "space-between",
   },
   footerText: { fontSize: 8, color: MUTED },
@@ -100,7 +105,7 @@ const styles = StyleSheet.create({
   tocLabel: { fontFamily: "Helvetica-Bold", fontSize: 7, letterSpacing: 1.2, marginBottom: 1 },
   tocLine: { flexDirection: "row", alignItems: "flex-end", marginTop: 1 },
   tocLineChild: { marginLeft: 12 },
-  tocNum: { width: 26, fontSize: 9 },
+  tocNum: { width: 36, fontSize: 9 },
   tocName: { fontSize: 9.5, color: INK, textDecoration: "none", maxWidth: "74%" },
   tocNameStrong: { fontFamily: "Helvetica-Bold", fontSize: 9, letterSpacing: 0.4, color: INK, textDecoration: "none", maxWidth: "78%" },
   tocLead: { flex: 1, marginHorizontal: 4, marginBottom: 2, borderBottomWidth: 0.6 },
@@ -110,23 +115,33 @@ const styles = StyleSheet.create({
   partPath: { fontSize: 8, color: MUTED, marginBottom: 8 },
   chapter: { marginBottom: 8 },
   chapterTitle: { fontFamily: "Helvetica-Bold", fontSize: 11.5, lineHeight: 1.25, marginBottom: 2 },
+  process: { marginTop: 8, marginBottom: 4 },
+  step: { marginBottom: 6 },
+  stepTitle: { fontFamily: "Helvetica-Bold", fontSize: 10.5, lineHeight: 1.25, marginBottom: 1 },
+  branch: { marginTop: 3, marginBottom: 4, marginLeft: 12, paddingLeft: 8, borderLeftWidth: 1.5, borderLeftColor: "#c5c9e4" },
+  branchKicker: { fontFamily: "Helvetica-Bold", fontSize: 7.5, letterSpacing: 1.1, color: MUTED, marginBottom: 1 },
+  otherTitle: { fontFamily: "Helvetica-Bold", fontSize: 11.5, marginTop: 10, marginBottom: 4 },
   body: { fontSize: 10, lineHeight: 1.32, marginBottom: 1 },
   muted: { fontSize: 10, color: MUTED, fontFamily: "Helvetica-Oblique" },
-  meta: { marginTop: 2, paddingTop: 2, borderTopWidth: 0.4, borderTopColor: "#e3e6f2", fontSize: 8, color: INK },
-  metaLabel: { color: MUTED, fontFamily: "Helvetica-Bold" },
   kicker: { fontSize: 8, color: MUTED, marginBottom: 6 },
   empty: { fontSize: 11, color: MUTED, marginTop: 8 },
 });
 
-function logoSrc() {
+function logoSrc(variant: "white" | "black" | "color") {
   if (typeof window === "undefined") return "";
-  return `${window.location.origin}/prime-ae-logo-white.png`;
+  return `${window.location.origin}/prime-ae-logo-${variant}.png`;
 }
 
-function PageFooter({ label }: { label: string }) {
+function PageFooter({ label, logo }: { label: string; logo?: string }) {
   return (
     <View style={styles.footerFixed} fixed>
-      <Text style={styles.footerBrand}>PRIME AE</Text>
+      {logo ? (
+        <View style={styles.footerLogoWrap}>
+          <Image src={logo} style={styles.footerLogo} />
+        </View>
+      ) : (
+        <Text style={styles.footerBrand}>PRIME AE</Text>
+      )}
       <Text style={styles.footerText} render={({ pageNumber, totalPages }) => `${pageNumber}  /  ${totalPages}`} />
       <Text style={styles.footerText}>{label}</Text>
     </View>
@@ -217,35 +232,76 @@ function paragraphs(text: string) {
   ));
 }
 
-function ChapterBlock({
+function StepBlock({
+  step,
+  partId,
+  ink,
+  index,
+}: {
+  step: DocStep;
+  partId: string;
+  ink: string;
+  index: PageIndex;
+}) {
+  const mark = (pageNumber: number) => recordPage(index, `part:${partId}`, pageNumber);
+  return (
+    <View id={`n-${step.id}`} style={styles.step}>
+      <Text style={styles.stepTitle}>
+        <Text style={{ color: ink }} render={({ pageNumber }) => { mark(pageNumber); return `${step.number}  `; }} />
+        {step.title}
+      </Text>
+      {step.description ? paragraphs(step.description) : null}
+      {step.branches.map((branch) => (
+        <BranchBlock key={`${step.id}:${branch.id}`} branch={branch} partId={partId} ink={ink} index={index} />
+      ))}
+    </View>
+  );
+}
+
+function BranchBlock({
+  branch,
+  partId,
+  ink,
+  index,
+}: {
+  branch: DocProcess;
+  partId: string;
+  ink: string;
+  index: PageIndex;
+}) {
+  return (
+    <View style={styles.branch}>
+      <Text style={[styles.branchKicker, { color: ink }]}>BRANCH {branch.number}</Text>
+      {branch.steps.map((step) => (
+        <StepBlock key={step.id} step={step} partId={partId} ink={ink} index={index} />
+      ))}
+    </View>
+  );
+}
+
+function ProcessBlock({
   part,
-  chapter,
+  process,
   index,
 }: {
   part: DocBookPart;
-  chapter: DocBookChapter;
+  process: DocProcess;
   index: PageIndex;
 }) {
   const ink = groupInk(part.color);
   const mark = (pageNumber: number) => {
-    recordPage(index, `ch:${chapter.id}`, pageNumber);
+    recordPage(index, `proc:${process.id}`, pageNumber);
     recordPage(index, `part:${part.id}`, pageNumber);
   };
   return (
-    <View id={`n-${chapter.id}`} style={styles.chapter} minPresenceAhead={18} wrap={false}>
+    <View id={`proc-${process.id}`} style={styles.process}>
       <Text style={styles.chapterTitle}>
-        <Text style={{ color: ink }} render={({ pageNumber }) => { mark(pageNumber); return `${chapter.chapter}  `; }} />
-        {chapter.title}
+        <Text style={{ color: ink }} render={({ pageNumber }) => { mark(pageNumber); return `${process.number}  `; }} />
+        {process.title}
       </Text>
-      {paragraphs(chapter.description)}
-      <Text style={styles.meta}>
-        <Text style={styles.metaLabel} render={({ pageNumber }) => { mark(pageNumber); return "Assignee  "; }} />
-        {chapter.assignee}
-        <Text style={styles.metaLabel}>{"    Class  "}</Text>
-        {chapter.nodeClass}
-        <Text style={styles.metaLabel}>{"    Kind  "}</Text>
-        {chapter.kind}
-      </Text>
+      {process.steps.map((step) => (
+        <StepBlock key={step.id} step={step} partId={part.id} ink={ink} index={index} />
+      ))}
     </View>
   );
 }
@@ -255,18 +311,19 @@ export function documentationDocument(
   index: PageIndex,
   folios: PageIndex | null,
   logo: string,
+  footerLogo = "",
 ) {
-  const nodes = parts.reduce((sum, part) => sum + part.chapters.length, 0);
+  const processes = parts.reduce((sum, part) => sum + part.processes.length, 0);
   return (
     <Document title="Project process documentation" author="PRIME AE" subject="Documentation" language="en" creator="Project process">
       <Cover
         title="Documentation"
-        blurb="Each group is a section. Nodes in that group follow in order, with assignee, class, and kind."
-        stats={`${parts.length} ${parts.length === 1 ? "section" : "sections"}  ·  ${nodes} ${nodes === 1 ? "node" : "nodes"}`}
+        blurb="Each group is a section. Inside it, each Start node begins a process that follows links through to End nodes. Branches sit under the step they leave, and leftover nodes are collected under Other."
+        stats={`${parts.length} ${parts.length === 1 ? "section" : "sections"}  ·  ${processes} ${processes === 1 ? "process" : "processes"}`}
         logo={logo}
       />
       <Page size="LETTER" style={styles.textPage} wrap>
-        <PageFooter label="Documentation" />
+        <PageFooter label="Documentation" logo={footerLogo} />
         <Text style={styles.tocTitle}>CONTENTS</Text>
         <Text style={styles.tocMeta}>PROJECT PROCESS DOCUMENTATION</Text>
         {parts.length ? (
@@ -282,16 +339,25 @@ export function documentationDocument(
                   strong
                   color={ink}
                 />
-                {part.chapters.map((chapter) => (
+                {part.processes.map((process) => (
                   <TocLine
-                    key={chapter.id}
-                    href={`#n-${chapter.id}`}
-                    name={chapter.title}
-                    folio={folioFor(folios, `ch:${chapter.id}`)}
-                    number={`${chapter.chapter}.`}
+                    key={process.id}
+                    href={`#proc-${process.id}`}
+                    name={process.title}
+                    folio={folioFor(folios, `proc:${process.id}`)}
+                    number={process.number}
                     color={ink}
                   />
                 ))}
+                {part.other.length ? (
+                  <TocLine
+                    href={`#other-${part.id}`}
+                    name="Other"
+                    folio={folioFor(folios, `other:${part.id}`)}
+                    number={part.otherNumber}
+                    color={ink}
+                  />
+                ) : null}
               </View>
             );
           })
@@ -302,15 +368,33 @@ export function documentationDocument(
       {parts.map((part) => (
         <Page key={part.id} size="LETTER" style={styles.sectionPage} wrap bookmark={part.title}>
           <GroupRail title={part.title} color={part.color} />
-          <PageFooter label="Documentation" />
+          <PageFooter label="Documentation" logo={footerLogo} />
           <View id={`part-${part.id}`}>
             <Text style={[styles.partKicker, { color: part.color }]}>SECTION {part.number}</Text>
             <Text style={styles.partTitle}>{part.title}</Text>
             {part.path ? <Text style={styles.partPath}>{part.path}</Text> : null}
           </View>
-          {part.chapters.map((chapter) => (
-            <ChapterBlock key={chapter.id} part={part} chapter={chapter} index={index} />
+          {part.processes.map((process) => (
+            <ProcessBlock key={process.id} part={part} process={process} index={index} />
           ))}
+          {part.other.length ? (
+            <View id={`other-${part.id}`}>
+              <Text style={styles.otherTitle}>
+                <Text
+                  style={{ color: groupInk(part.color) }}
+                  render={({ pageNumber }) => {
+                    recordPage(index, `other:${part.id}`, pageNumber);
+                    recordPage(index, `part:${part.id}`, pageNumber);
+                    return `${part.otherNumber}  `;
+                  }}
+                />
+                Other
+              </Text>
+              {part.other.map((step) => (
+                <StepBlock key={step.id} step={step} partId={part.id} ink={groupInk(part.color)} index={index} />
+              ))}
+            </View>
+          ) : null}
         </Page>
       ))}
     </Document>
@@ -318,7 +402,7 @@ export function documentationDocument(
 }
 
 function groupInk(color: string) {
-  return groupColorInk(color) === "#fff7ed" ? color : mixHex(color, "#1c1740", 0.28);
+  return groupColorInk(color) === "#fff7ed" ? color : mixHex(color, INK, 0.28);
 }
 
 function mixHex(hex: string, other: string, amount: number) {
@@ -345,11 +429,11 @@ function edgePath(layout: FlowchartLayout, fromId: string, toId: string) {
 }
 
 function boxColors(kind: FlowchartLayout["boxes"][number]["kind"], color: string) {
-  const stroke = groupColorInk(color) === "#fff7ed" ? color : mixHex(color, "#1c1740", 0.35);
-  if (kind === "start") return { fill: ORANGE, stroke: mixHex(ORANGE, "#1c1740", 0.2), text: "#ffffff", sub: "rgba(255,255,255,0.88)" };
+  const stroke = groupColorInk(color) === "#fff7ed" ? color : mixHex(color, INK, 0.35);
+  if (kind === "start") return { fill: ORANGE, stroke: mixHex(ORANGE, INK, 0.2), text: INK, sub: "rgba(35,27,75,0.8)" };
   if (kind === "end") {
     const ink = groupColorInk(color);
-    return { fill: color, stroke, text: ink, sub: ink === "#fff7ed" ? "rgba(255,255,255,0.82)" : "rgba(28,23,64,0.7)" };
+    return { fill: color, stroke, text: ink, sub: ink === "#fff7ed" ? "rgba(255,255,255,0.82)" : "rgba(35,27,75,0.72)" };
   }
   return { fill: "#ffffff", stroke, text: INK, sub: MUTED };
 }
@@ -403,18 +487,17 @@ function FlowchartFigure({ layout, marker }: { layout: FlowchartLayout; marker: 
         const tone = boxColors(box.kind, accent);
         const lines = wrapFlowchartTitle(box.title, box.w - 22);
         const cx = box.x + box.w / 2;
+        const lineH = 14;
+        const firstY = box.y + (box.h - lines.length * lineH) / 2 + 11;
         return (
           <G key={box.id}>
             <Rect x={box.x} y={box.y} width={box.w} height={box.h} rx={10} fill={tone.fill} stroke={tone.stroke} strokeWidth={1.8} />
-            <Text x={cx} y={box.y + 20} textAnchor="middle" fill={tone.text} style={svgFont(12, true)}>
+            <Text x={cx} y={firstY} textAnchor="middle" fill={tone.text} style={svgFont(12, true)}>
               {lines.map((line, lineIndex) => (
-                <Tspan key={`${box.id}-${lineIndex}`} x={cx} y={box.y + 20 + lineIndex * 14}>
+                <Tspan key={`${box.id}-${lineIndex}`} x={cx} y={firstY + lineIndex * lineH}>
                   {line}
                 </Tspan>
               ))}
-            </Text>
-            <Text x={cx} y={box.y + box.h - 10} textAnchor="middle" fill={tone.sub} style={svgFont(10)}>
-              {box.status}
             </Text>
           </G>
         );
@@ -431,7 +514,7 @@ function flowchartSheets(pages: FlowchartGroupPage[]) {
   });
 }
 
-export function flowchartDocument(pages: FlowchartGroupPage[], logo: string) {
+export function flowchartDocument(pages: FlowchartGroupPage[], logo: string, footerLogo = "") {
   const sheets = flowchartSheets(pages);
   const nodes = pages.reduce((sum, page) => sum + page.nodes.length, 0);
   return (
@@ -448,7 +531,7 @@ export function flowchartDocument(pages: FlowchartGroupPage[], logo: string) {
           const marker = `arrow-${sheet.page.groupId}-${sheet.index}`.replace(/[^a-zA-Z0-9_-]/g, "_");
           return (
             <Page key={`${sheet.page.groupId}-${sheet.index}`} size="LETTER" style={styles.textPage} bookmark={sheet.index === 0 ? sheet.page.title : undefined}>
-              <PageFooter label="Flowcharts" />
+              <PageFooter label="Flowcharts" logo={footerLogo} />
               <Text style={styles.kicker}>
                 {sheet.page.path}
                 {continued}
@@ -464,7 +547,7 @@ export function flowchartDocument(pages: FlowchartGroupPage[], logo: string) {
         })
       ) : (
         <Page size="LETTER" style={styles.textPage}>
-          <PageFooter label="Flowcharts" />
+          <PageFooter label="Flowcharts" logo={footerLogo} />
           <Text style={styles.empty}>No groups selected.</Text>
         </Page>
       )}
@@ -494,13 +577,14 @@ async function deliverPdf(element: PdfTree, filename: string): Promise<PdfDelive
 
 export async function printDocumentationPdf(nodes: GraphNode[], links: GraphLink[], groups: GraphGroup[]) {
   const book = buildDocumentationBook(nodes, links, groups);
-  const logo = logoSrc();
+  const logo = logoSrc("color");
+  const footerLogo = logoSrc("black");
   const index: PageIndex = new Map();
-  await pdf(documentationDocument(book.parts, index, null, logo) as PdfTree).toBlob();
+  await pdf(documentationDocument(book.parts, index, null, logo, footerLogo) as PdfTree).toBlob();
   const folios: PageIndex = new Map([...index].map(([id, range]) => [id, { ...range }]));
-  return deliverPdf(documentationDocument(book.parts, new Map(), folios, logo) as PdfTree, "project-process-documentation.pdf");
+  return deliverPdf(documentationDocument(book.parts, new Map(), folios, logo, footerLogo) as PdfTree, "project-process-documentation.pdf");
 }
 
 export async function printFlowchartPdf(pages: FlowchartGroupPage[]) {
-  return deliverPdf(flowchartDocument(pages, logoSrc()) as PdfTree, "project-process-flowcharts.pdf");
+  return deliverPdf(flowchartDocument(pages, logoSrc("color"), logoSrc("black")) as PdfTree, "project-process-flowcharts.pdf");
 }

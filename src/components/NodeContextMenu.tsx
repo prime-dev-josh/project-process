@@ -1,5 +1,6 @@
 import { ctxBox, cx, dangerText, menuItem } from "../styles";
 import AddGraphActions from "./AddGraphActions";
+import HighlightFlowButton from "./HighlightFlowButton";
 import type { ArrowStyle } from "../types";
 
 type Props = {
@@ -28,9 +29,10 @@ export default function NodeContextMenu({
   return (
     <div className={cx("ctx", ctxBox, "w-[196px] min-w-0 rounded-lg p-1")} style={{ left: x, top: y }}>
       <AddGraphActions accent={accent} onAddNode={onAddNode} onLink={onLink} />
-      <button type="button" className={menuItem} onClick={onHighlightFlow}>
-        {flowHighlighted ? "Clear highlight" : "Highlight flow"}
-      </button>
+      <div className="mx-1 mt-1.5 mb-0.5 text-[9px] font-bold tracking-wider text-[var(--muted)] uppercase">Follow flow</div>
+      <div className="px-0.5 pb-1">
+        <HighlightFlowButton active={flowHighlighted} emphasized onClick={onHighlightFlow} />
+      </div>
       <div className="sep mx-1 my-1 h-px bg-[var(--line)]" />
       <div className="grid grid-cols-2 gap-0.5">
         <button

@@ -5,6 +5,7 @@ import FlowchartExportModal from "./components/FlowchartExportModal";
 import GroupDeleteModal from "./components/GroupDeleteModal";
 import EditLinkPanel from "./components/EditLinkPanel";
 import EditNodePanel, { type NodeEditPreview } from "./components/EditNodePanel";
+import FlowHighlightPanel from "./components/FlowHighlightPanel";
 import GroupTreeCanvas from "./components/GroupTreeCanvas";
 import GroupTreeInspector from "./components/GroupTreeInspector";
 import LeftSidePanel from "./components/LeftSidePanel";
@@ -30,6 +31,7 @@ import {
   childrenOf,
   deleteGroup,
   groupDeleteImpact,
+  inheritGroupFromFilter,
   type GroupDeleteImpact,
   isLeaf,
   leafGroups,
@@ -118,6 +120,7 @@ export default function App() {
   const [groupFilters, setGroupFilters] = useState<string[]>([]);
   /** Session-only flow highlight; never written to map storage or SQL. */
   const [highlightOriginId, setHighlightOriginId] = useState<string | null>(null);
+  const [flowTrail, setFlowTrail] = useState<string[]>([]);
   const [draftPrompt, setDraftPrompt] = useState<{ proceed: () => void } | null>(null);
   const [groupDelete, setGroupDelete] = useState<GroupDeleteImpact | null>(null);
   const [flowchartExportOpen, setFlowchartExportOpen] = useState(false);
@@ -169,6 +172,13 @@ export default function App() {
     () => (highlightFlow ? [...highlightFlow.hops.keys()] : null),
     [highlightFlow],
   );
+  const flowStepId = useMemo(() => {
+    for (let i = flowTrail.length - 1; i >= 0; i -= 1) {
+      const id = flowTrail[i];
+      if (nodeById.has(id) && highlightFlow?.hops.has(id)) return id;
+    }
+    return highlightOriginId;
+  }, [flowTrail, highlightFlow, highlightOriginId, nodeById]);
   const editing = editingId ? nodeById.get(editingId) ?? null : null;
   const editingLink = links.find((l) => l.id === editingLinkId) ?? null;
 
@@ -367,6 +377,7 @@ export default function App() {
         }
         if (highlightOriginId) {
           setHighlightOriginId(null);
+          setFlowTrail([]);
           return;
         }
         guardDraft(clearInteraction);
@@ -445,7 +456,6 @@ export default function App() {
       patch.textScale === undefined &&
       patch.cardScale === undefined &&
       patch.colorBy === undefined &&
-      patch.cardInfo === undefined &&
       patch.showText === undefined;
     setSettings((current) => {
       const next = mergeViewSettings(current, patch);
@@ -454,6 +464,14 @@ export default function App() {
         graphRef.current?.applyViewForces?.({ reheat: next.physics, rebuildStructure: true });
       } else if (patch.physics !== undefined) {
         graphRef.current?.applyViewForces?.({ rebuildStructure: true, reheat: Boolean(next.physics) });
+      } else if (
+        patch.showText !== undefined ||
+        patch.textScale !== undefined ||
+        patch.cardScale !== undefined ||
+        patch.enlarge !== undefined ||
+        patch.colorBy !== undefined
+      ) {
+        graphRef.current?.resumeAnimation?.();
       }
       return next;
     });
@@ -503,7 +521,7 @@ export default function App() {
   }
 
   function addLooseNode(at: { x: number; y: number }) {
-    const { nodes: current, links: currentLinks } = graphStore.state;
+    const { nodes: current, links: currentLinks, groups: currentGroups } = graphStore.state;
     const parentId = placing?.parentId;
     const parent = parentId ? (liveNode(parentId) ?? null) : null;
     if (parent) {
@@ -518,6 +536,7 @@ export default function App() {
       level: 2,
       type: "concept",
       size: placing?.size,
+      groupId: inheritGroupFromFilter(groupFilters, currentGroups),
       x: at.x,
       y: at.y,
     });
@@ -732,7 +751,7 @@ export default function App() {
 
   function insertNodeOnLink(linkId: string) {
     const { nodes: current, links: currentLinks } = graphStore.state;
-    const next = insertNodeBetween(current, currentLinks, linkId);
+    const next = insertNodeBetween(current, currentLinks, linkId, graphStore.state.groups);
     if (!next) return;
     commitGraph("Inserted node on connection", { nodes: next.nodes, links: next.links });
     openNodeEditor(next.id);
@@ -819,10 +838,66 @@ export default function App() {
     });
   }
 
+  const nodeEditFocus = canvasView === "map" && Boolean(editing) && !placing && !connect;
+  const flowFocus = canvasView === "map" && Boolean(highlightFlow) && !placing && !connect;
+  const leftRailSize = nodeEditFocus || flowFocus ? editRail : leftRail;
+
   function centerOn(x: number, y: number) {
-    const fg = graphRef.current as (GraphHandle & { centerAt?: (x: number, y: number, ms?: number) => void }) | undefined;
-    fg?.centerAt?.(x, y, 400);
+    const fg = graphRef.current as
+      | (GraphHandle & {
+          centerAt?: (x: number, y: number, ms?: number) => void;
+          zoom?: (k?: number, ms?: number) => number;
+        })
+      | undefined;
+    const k = fg?.zoom?.() ?? zoom;
+    const rail = Math.min(Math.max(0, leftRailSize.width), Math.max(0, size.w - 48));
+    const shift = rotatePoint(rail / 2, 0, 0, 0, -degToRad(viewRotation));
+    fg?.centerAt?.(x - shift.x / Math.max(k, 1e-4), y - shift.y / Math.max(k, 1e-4), 400);
   }
+
+  function stepFlow(id: string) {
+    if (!highlightFlow?.hops.has(id)) return;
+    const hop = highlightFlow.hops.get(id) ?? 0;
+    setFlowTrail((prev) => {
+      const idx = prev.indexOf(id);
+      if (idx >= 0) return prev.slice(0, idx + 1);
+      const prefix = prev.filter((item) => (highlightFlow.hops.get(item) ?? 0) < hop);
+      const start = prefix.length ? prefix : highlightOriginId ? [highlightOriginId] : [];
+      return [...start, id];
+    });
+  }
+
+  function backFlow() {
+    setFlowTrail((prev) => (prev.length > 1 ? prev.slice(0, -1) : prev));
+  }
+
+  useEffect(() => {
+    if (highlightOriginId && !nodeById.has(highlightOriginId)) {
+      setHighlightOriginId(null);
+      setFlowTrail([]);
+    }
+  }, [highlightOriginId, nodeById]);
+
+  useEffect(() => {
+    if (!highlightOriginId) {
+      setFlowTrail((prev) => (prev.length ? [] : prev));
+      return;
+    }
+    setFlowTrail((prev) => {
+      if (prev[0] === highlightOriginId && prev.length > 0) return prev;
+      return [highlightOriginId];
+    });
+    setEditingId(null);
+    setEditVisual(null);
+  }, [highlightOriginId]);
+
+  useEffect(() => {
+    if (!highlightOriginId || !flowStepId) return;
+    setSelectedIds([flowStepId]);
+    setPicked({ kind: "node", id: flowStepId });
+    const live = liveNode(flowStepId);
+    if (live?.x != null && live.y != null) centerOn(live.x, live.y);
+  }, [flowStepId, highlightOriginId]);
 
   function focusNode(id: string) {
     if (editLocked) return;
@@ -879,12 +954,15 @@ export default function App() {
     const bboxH = Math.max(maxY - minY, 48);
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
+    const rail = Math.min(Math.max(0, leftRailSize.width), Math.max(0, size.w - 48));
+    const visibleW = Math.max(48, size.w - rail);
     const fitZoom = Math.max(
       GRAPH_MIN_ZOOM,
-      Math.min((size.w - pad * 2) / bboxW, (size.h - pad * 2) / bboxH, GRAPH_MAX_ZOOM),
+      Math.min(Math.max(48, visibleW - pad * 2) / bboxW, Math.max(48, size.h - pad * 2) / bboxH, GRAPH_MAX_ZOOM),
     );
-    return { cx, cy, fitZoom };
-  }, [nodes, size.w, size.h, hideFiltered, search, settings.colorBy, statusFilters, employeeFilter, groupFilters]);
+    const shift = rotatePoint(rail / 2, 0, 0, 0, -degToRad(viewRotation));
+    return { cx: cx - shift.x / fitZoom, cy: cy - shift.y / fitZoom, fitZoom };
+  }, [nodes, size.w, size.h, hideFiltered, search, settings.colorBy, statusFilters, employeeFilter, groupFilters, leftRailSize.width, viewRotation]);
 
   const fitGraph = useCallback(() => {
     const fg = graphRef.current as
@@ -1038,9 +1116,6 @@ export default function App() {
     };
   }, [picked, selectedIds, links, nodes, size, zoom, viewRotation, settings.enlarge, nodesMoving]);
 
-  const nodeEditFocus = canvasView === "map" && Boolean(editing) && !placing && !connect;
-  const leftRailSize = nodeEditFocus ? editRail : leftRail;
-
   return (
     <div className="flex h-full min-h-0 flex-col">
       <Header
@@ -1111,6 +1186,7 @@ export default function App() {
             onRefresh={refreshGroupsTree}
             refreshing={groupsRefreshing}
             filterVisibleIds={treeFilterVisibleIds}
+            obscuredLeft={leftRailSize.width}
           />
         ) : (
         <>
@@ -1140,6 +1216,7 @@ export default function App() {
             hideFiltered={hideFiltered}
             highlightIds={highlightIds}
             highlightFlow={highlightFlow}
+            spotlightId={flowFocus ? flowStepId : null}
             theme={theme}
             rotation={degToRad(viewRotation)}
             uprightText={!viewSpinning}
@@ -1148,6 +1225,10 @@ export default function App() {
             graphRef={graphRef}
             onSelect={(id, additive) => {
               if (editLocked) return;
+              if (id && highlightFlow?.hops.has(id) && !additive) {
+                stepFlow(id);
+                return;
+              }
               if (id) pickNode(id, additive);
               else guardDraft(dismissPreview);
             }}
@@ -1205,6 +1286,7 @@ export default function App() {
               }
               setMenu(null);
               setHighlightOriginId(null);
+              setFlowTrail([]);
               guardDraft(() => {
                 dismissEditPanel();
                 dismissPreview();
@@ -1247,7 +1329,7 @@ export default function App() {
           />
         </div>
 
-        {canvasView === "map" && !mapLoading && !nodeEditFocus ? (
+        {canvasView === "map" && !mapLoading && !nodeEditFocus && !flowFocus ? (
           <div className="absolute top-2 z-[10] w-fit pl-1.5" style={{ left: "var(--map-rail-w)" }}>
             <PlusMenuButton
               open={plusOpen}
@@ -1270,7 +1352,7 @@ export default function App() {
         ) : null}
 
         {(placing || connect || highlightOriginId || selectedIds.length > 1) && (
-          <div className="absolute top-3 left-1/2 z-[8] -translate-x-1/2 rounded-full bg-[rgba(36,50,138,0.94)] px-3 py-1.5 text-xs font-bold tracking-wide text-white">
+          <div className="absolute top-3 left-1/2 z-[8] -translate-x-1/2 rounded-full bg-[rgba(36,51,138,0.94)] px-3 py-1.5 text-xs font-bold tracking-wide text-white">
             {placing
               ? "Click to place a node · Esc to cancel"
               : connect?.from
@@ -1278,7 +1360,7 @@ export default function App() {
                 : connect
                   ? "Click the first node · Esc to cancel"
                   : highlightOriginId
-                    ? "Highlighting flow · Esc to clear"
+                    ? "Stepping through flow · Esc to clear"
                     : `${selectedIds.length} selected · Drag a selected node to move · − removes one · Esc to clear`}
           </div>
         )}
@@ -1286,8 +1368,7 @@ export default function App() {
         </>
         )}
 
-        {canvasView === "groups" || !mapLoading ? (
-          <aside
+        <aside
             className="site-left-rail absolute top-0 left-0 z-[11] flex h-full flex-col overflow-visible border-r border-[var(--line)] bg-[var(--card)] shadow-[var(--shadow)]"
             style={{ width: leftRailSize.width }}
           >
@@ -1309,6 +1390,22 @@ export default function App() {
                 onAddRoot={() => addGroup(null)}
                 onUpdateGroup={updateGroup}
               />
+            ) : flowFocus && highlightFlow && highlightOriginId ? (
+              <FlowHighlightPanel
+                originId={highlightOriginId}
+                currentId={flowStepId ?? highlightOriginId}
+                flow={highlightFlow}
+                nodes={nodes}
+                links={links}
+                groups={groups}
+                canBack={flowTrail.length > 1}
+                onClear={() => {
+                  setHighlightOriginId(null);
+                  setFlowTrail([]);
+                }}
+                onBack={backFlow}
+                onStep={stepFlow}
+              />
             ) : nodeEditFocus && editing ? (
               <div
                 className="left-panel-edit is-tinted flex h-full min-h-0 flex-col overflow-hidden"
@@ -1321,6 +1418,8 @@ export default function App() {
                   nodes={nodes}
                   groups={groups}
                   colorBy={settings.colorBy}
+                  flowHighlighted={highlightOriginId === editing.id}
+                  onHighlightFlow={() => setHighlightOriginId((prev) => (prev === editing.id ? null : editing.id))}
                   onSave={(patch) => updateNode(editing.id, patch)}
                 />
               </div>
@@ -1357,7 +1456,6 @@ export default function App() {
                     40,
                   );
                 }}
-                onToggleCards={() => setSettings(mergeViewSettings(settings, { cardInfo: !settings.cardInfo }))}
                 onUpdateGroup={updateGroup}
               />
             )}
@@ -1367,13 +1465,12 @@ export default function App() {
               value={leftRailSize.width}
               min={leftRailSize.min}
               max={leftRailSize.max}
-              label={nodeEditFocus ? "Resize edit panel" : "Resize side panel"}
+              label={flowFocus ? "Resize flow panel" : nodeEditFocus ? "Resize edit panel" : "Resize side panel"}
               onChange={leftRailSize.setWidth}
               onCommit={leftRailSize.commit}
               onReset={leftRailSize.reset}
             />
           </aside>
-        ) : null}
         </div>
       </div>
 
@@ -1468,10 +1565,11 @@ export default function App() {
         />
       )}
 
-      {canvasView === "map" && previewNode && (
+      {canvasView === "map" && previewNode && !flowFocus && (
         <NodePreviewPanel
           node={previewNode}
           colorBy={settings.colorBy}
+          scale={settings.cardScale ?? settings.textScale ?? 1}
           style={previewPos}
           onPointerEnter={() => {
             previewOverRef.current = true;

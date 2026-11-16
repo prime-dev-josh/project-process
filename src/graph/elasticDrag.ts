@@ -1,6 +1,11 @@
 import type { GraphLink } from "../types";
 import { linkEnds } from "./visibility";
 
+/** Only immediately linked nodes ride along with a drag. */
+export const DRAG_NEIGHBOR_HOPS = 1;
+/** Direct neighbors follow this fraction of the dragged node's motion. */
+export const DRAG_NEIGHBOR_FOLLOW = 0.2;
+
 export function buildUndirectedAdjacency(
   links: GraphLink[],
   allowLink?: (sourceId: string, targetId: string) => boolean,

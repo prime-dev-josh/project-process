@@ -21,6 +21,7 @@ import {
 } from "../graph/groupHull";
 import { employeeInitials } from "../graph/employee";
 import { findSelfIntersection, lassoRegion, pointInPolygon, type Point } from "../graph/lasso";
+import { previewCardGraphBox, previewCardTypography, PREVIEW_CARD } from "../graph/previewCard";
 import { rotatePoint, viewCoverOffset } from "../graph/viewRotation";
 import { type DirectedFlow, isFlowLink } from "../graph/flow";
 import {
@@ -31,7 +32,12 @@ import {
   pulseStroke,
 } from "../graph/pulse";
 import { detangleLayout } from "../graph/detangle";
-import { buildUndirectedAdjacency, nodesWithinHops } from "../graph/elasticDrag";
+import {
+  buildUndirectedAdjacency,
+  DRAG_NEIGHBOR_FOLLOW,
+  DRAG_NEIGHBOR_HOPS,
+  nodesWithinHops,
+} from "../graph/elasticDrag";
 import { GRAPH_MAX_ZOOM, GRAPH_MIN_ZOOM } from "../graph/viewSettings";
 import { placeRevealedNode, revealedNeighbor, revealOrder, topologyKey } from "../graph/stagedReveal";
 import { filterGraph, isFiltered, linkEnds, matchesQuery } from "../graph/visibility";
@@ -68,6 +74,8 @@ type Props = {
   hideFiltered: boolean;
   highlightIds?: string[] | null;
   highlightFlow?: DirectedFlow | null;
+  /** Slideshow step: enlarge this node and keep its card visible. */
+  spotlightId?: string | null;
   theme: "light" | "dark";
   rotation?: number;
   uprightText?: boolean;
@@ -96,22 +104,39 @@ type Props = {
   graphRef: MutableRefObject<GraphHandle | undefined>;
 };
 
-const REVEAL_MS = 22;
+/**
+ * Init-load knobs. These only affect the staggered reveal when the map first builds
+ * (and when a filter rebuilds it). They do not change Fit, wheel zoom, or physics.
+ *
+ * Speed is `REVEAL_BATCH` nodes every `REVEAL_MS` milliseconds.
+ * Raise `REVEAL_MS` or lower `REVEAL_BATCH` to slow the intro.
+ * Zoom-in is capped by `REVEAL_ZOOM_MAX`; lower it to keep the camera further out.
+ */
+/** Pause between reveal ticks. Higher = slower intro. 40–80 is a readable pace; under 20 feels like a dump. */
+const REVEAL_MS = 40;
+/** Nodes added on each tick. Higher = faster intro. 1 is one-at-a-time; 8+ finishes a large map in a blink. */
+const REVEAL_BATCH = 3;
 const SEARCH_DIM_ALPHA = 0.25;
-const FLOW_DIM_ALPHA = 0.16;
+const FLOW_DIM_ALPHA = 0.34;
+/** How long a newly revealed node takes to fade from invisible to solid. Higher = a longer fade, not a slower spawn rate. */
 const REVEAL_FADE_MS = 320;
-/** Intro camera: never zoom in past this; grows with the revealed bounds. */
-const REVEAL_ZOOM_MAX = 0.095;
-/** Pan/zoom easing time constant (ms) — higher = smoother, less jitter. */
-const REVEAL_CAMERA_SMOOTH_MS = 680;
+/**
+ * Closest the intro camera is allowed to zoom. Lower = stay further out (a small early cluster
+ * will not fill the screen). Higher = zoom in on the nodes revealed so far. 0.05 is wide; 0.12 is tight.
+ */
+const REVEAL_ZOOM_MAX = 0.004;
+/** Camera catch-up time. Higher = the view eases toward new nodes; lower = it snaps and feels jittery. */
+const REVEAL_CAMERA_SMOOTH_MS = 900;
 
 function initRevealViewport(
   nodes: Array<{ x?: number; y?: number }>,
   viewW: number,
   viewH: number,
 ) {
-  const pad = 132;
-  const minSpan = 100;
+  // Graph-space margin around the revealed nodes. Higher = more empty space, so the fit zoom stays further out.
+  const pad = 220;
+  // Smallest box the camera will frame. Higher stops the first few nodes from being treated as a tiny target and zoomed into.
+  const minSpan = 240;
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
@@ -166,14 +191,8 @@ function deselectBadgePx(node: GraphNode, globalScale: number, enlarge: number) 
   return Math.min(7, Math.max(4.5, dotRadius(node, globalScale, enlarge) * globalScale * 0.75));
 }
 
-function cardBox(node: GraphNode, globalScale: number, enlarge: number) {
-  const w = (172 * enlarge * Math.min(node.size, 1.35)) / globalScale;
-  const h = ((node.description ? 74 : 42) * enlarge) / globalScale;
-  return { w, h };
-}
-
-function cardsAtZoom(cardInfo: boolean, globalScale: number) {
-  return Boolean(cardInfo) && globalScale > 1.4;
+function flowCardScale(settings: { cardScale?: number; textScale?: number }) {
+  return viewScale(settings.cardScale ?? settings.textScale, 1);
 }
 
 function viewScale(value: number | undefined, fallback = 1) {
@@ -419,8 +438,8 @@ function fitWrappedText(
   maxLines: number,
   baseFontPx: number,
   fontWeight: number | string = 600,
+  minFontPx = 6,
 ) {
-  const minFontPx = 6;
   for (let fontPx = baseFontPx; fontPx >= minFontPx; fontPx -= 0.5) {
     ctx.font = `${fontWeight} ${fontPx}px ${LABEL_FONT}`;
     const lines = wrapAllWords(ctx, text, maxWidth, maxLines, false);
@@ -454,6 +473,7 @@ function GraphCanvas({
   hideFiltered,
   highlightIds = null,
   highlightFlow = null,
+  spotlightId = null,
   theme,
   rotation = 0,
   uprightText = true,
@@ -554,11 +574,31 @@ function GraphCanvas({
   const [gesture, setGesture] = useState<"marquee" | "group" | "pan" | "drag" | null>(null);
   const [dragLivePreview, setDragLivePreview] = useState(false);
   const [overBadge, setOverBadge] = useState(false);
+  const [lookPaint, setLookPaint] = useState(false);
   const rotationRef = useRef(rotation);
   rotationRef.current = rotation;
   useEffect(() => {
     graphRef.current?.resumeAnimation?.();
   }, [graphRef, rotation, uprightText]);
+  useEffect(() => {
+    setLookPaint(true);
+    graphRef.current?.resumeAnimation?.();
+    (graphRef.current as { refresh?: () => void } | undefined)?.refresh?.();
+    if (!settings.showText && !spotlightId) {
+      const canvas = labelCanvasRef.current;
+      const ctx = canvas?.getContext("2d");
+      if (canvas && ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    const frame = requestAnimationFrame(() => {
+      graphRef.current?.resumeAnimation?.();
+      setLookPaint(false);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [settings.showText, settings.textScale, settings.cardScale, settings.enlarge, settings.colorBy, spotlightId, graphRef]);
+  useEffect(() => {
+    if (!placeArmed && !connectArmed) return;
+    graphRef.current?.resumeAnimation?.();
+  }, [placeArmed, connectArmed, graphRef]);
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const palette = graphTheme(theme);
@@ -647,16 +687,20 @@ function GraphCanvas({
     const order = orderRef.current;
     if (!order.length || revealedIds.length >= order.length) return;
     const visible = new Set(revealedIds);
-    const nextId = order[revealedIds.length];
+    const take = Math.min(REVEAL_BATCH, order.length - revealedIds.length);
     const timer = window.setTimeout(() => {
-      const node = nodesRef.current.find((item) => item.id === nextId);
-      if (node) {
-        const live = liveFrameRef.current?.nodes ?? nodesRef.current;
-        const neighbor = revealedNeighbor(nextId, visible, live, linksRef.current);
-        placeRevealedNode(node, neighbor, revealedIds.length, settingsRef.current.linkDistance || 50);
-        if (initRevealRef.current) revealBornRef.current.set(nextId, performance.now());
+      const live = liveFrameRef.current?.nodes ?? nodesRef.current;
+      for (let step = 0; step < take; step += 1) {
+        const nextId = order[revealedIds.length + step];
+        const node = nodesRef.current.find((item) => item.id === nextId);
+        if (node) {
+          const neighbor = revealedNeighbor(nextId, visible, live, linksRef.current);
+          placeRevealedNode(node, neighbor, revealedIds.length + step, settingsRef.current.linkDistance || 50);
+          if (initRevealRef.current) revealBornRef.current.set(nextId, performance.now());
+        }
+        visible.add(nextId);
       }
-      setRevealedIds(order.slice(0, revealedIds.length + 1));
+      setRevealedIds(order.slice(0, revealedIds.length + take));
     }, REVEAL_MS);
     return () => window.clearTimeout(timer);
   }, [graphKey, revealedIds, graphRef]);
@@ -825,6 +869,10 @@ function GraphCanvas({
     return () => cancelAnimationFrame(frame);
   }, [highlightFlow, graphRef]);
 
+  useEffect(() => {
+    graphRef.current?.resumeAnimation?.();
+  }, [spotlightId, graphRef]);
+
   function flowPulseAmount(link: GraphLink) {
     if (!highlightFlow || !isFlowLink(link, highlightFlow.hops)) return 0;
     const front = pulseFront(flowPulseAt.current, FLOW_HIGHLIGHT_PULSE_SPEED, highlightFlow.maxHop);
@@ -877,10 +925,8 @@ function GraphCanvas({
   const hullCacheRef = useRef(new Map<string, { sig: string; hulls: Point[][]; cheap: boolean }>());
   const hullFrameRef = useRef(0);
   const liveFrameRef = useRef<{ nodes: GraphNode[]; byId: Map<string, GraphNode> } | null>(null);
-  const DRAG_LINK_STRENGTH = 0.94;
   const REST_LINK_STRENGTH = 0.28;
-  const ELASTIC_HOPS_PHYSICS = 5;
-  const ELASTIC_HOPS_NO_PHYSICS = 512;
+  const dragFreezeRef = useRef<Set<string> | null>(null);
   nodesRef.current = mapNodes;
   linksRef.current = mapLinks;
   groupsRef.current = groups;
@@ -953,6 +999,19 @@ function GraphCanvas({
     return { x: rotated.x - ox, y: rotated.y - oy };
   }
 
+  function titlesOn() {
+    return settingsRef.current.showText !== false;
+  }
+
+  function scaleFor(node: GraphNode) {
+    const base = viewScale(settings.enlarge);
+    return spotlightId && node.id === spotlightId ? base * 1.6 : base;
+  }
+
+  function flowStepCard(node: GraphNode) {
+    return Boolean(spotlightId && node.id === spotlightId);
+  }
+
   function overlayLabels() {
     return uprightText && Math.abs(rotationRef.current) > 1e-6;
   }
@@ -1000,6 +1059,125 @@ function GraphCanvas({
     return liveFrameRef.current?.byId.get(id);
   }
 
+  function paintFlowStepPreviewCard(
+    ctx: CanvasRenderingContext2D,
+    node: GraphNode,
+    globalScale: number,
+    opts: {
+      r: number;
+      cardScale: number;
+      border: string;
+      selected: boolean;
+      connecting: boolean;
+      spotlight: boolean;
+      showText: boolean;
+      nodeAlpha: number;
+      graph?: { x: number; y: number; unrotate: number };
+      screen?: { rx: number; ry: number };
+    },
+  ) {
+    const hasDesc = Boolean(node.description?.trim());
+    const { w, h } = previewCardGraphBox(globalScale, opts.cardScale, hasDesc);
+    const typo = previewCardTypography(opts.cardScale);
+    const stroke =
+      opts.spotlight || opts.selected || opts.connecting ? palette.ring : withAlpha(opts.border, 0.85);
+
+    const paintAt = (rx: number, ry: number, sw: number, sh: number) => {
+      const rad = typo.radius;
+      ctx.fillStyle = palette.card;
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = opts.spotlight || opts.selected ? 1.5 : 1;
+      ctx.beginPath();
+      ctx.moveTo(rx + rad, ry);
+      ctx.arcTo(rx + sw, ry, rx + sw, ry + sh, rad);
+      ctx.arcTo(rx + sw, ry + sh, rx, ry + sh, rad);
+      ctx.arcTo(rx, ry + sh, rx, ry, rad);
+      ctx.arcTo(rx, ry, rx + sw, ry, rad);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      if (!opts.showText && !opts.spotlight) return;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(rx, ry, sw, sh);
+      ctx.clip();
+      const titlePad = sw - 2 * typo.padX;
+      const titleFit = fitWrappedText(ctx, node.title, titlePad, typo.titleLines, typo.titleBase, 600, typo.titleMin);
+      ctx.fillStyle = palette.cardText;
+      ctx.font = `600 ${titleFit.fontPx}px ${LABEL_FONT}`;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      titleFit.lines.forEach((line, i) => {
+        ctx.fillText(line, rx + typo.padX, ry + typo.padY + i * (titleFit.fontPx + PREVIEW_CARD.titleLineGap));
+      });
+      if (hasDesc) {
+        const bodyFit = fitWrappedText(
+          ctx,
+          node.description!,
+          titlePad,
+          typo.bodyLines,
+          typo.bodyBase,
+          400,
+          typo.bodyMin,
+        );
+        ctx.fillStyle = palette.cardMuted;
+        ctx.font = `400 ${bodyFit.fontPx}px ${LABEL_FONT}`;
+        const bodyY =
+          ry +
+          typo.padY +
+          titleFit.lines.length * (titleFit.fontPx + PREVIEW_CARD.titleLineGap) +
+          PREVIEW_CARD.titleBodyGap * typo.s;
+        bodyFit.lines.forEach((line, i) => {
+          ctx.fillText(line, rx + typo.padX, bodyY + i * (bodyFit.fontPx + PREVIEW_CARD.bodyLineGap));
+        });
+      }
+      ctx.restore();
+    };
+
+    ctx.save();
+    ctx.globalAlpha = opts.nodeAlpha;
+    if (opts.screen) {
+      paintAt(opts.screen.rx, opts.screen.ry, w * globalScale, h * globalScale);
+    } else if (opts.graph) {
+      inScreenSpace(
+        ctx,
+        opts.graph.x,
+        opts.graph.y,
+        globalScale,
+        (k) => {
+          const sw = w * k;
+          const sh = h * k;
+          paintAt(-sw / 2, opts.r * k + 6, sw, sh);
+        },
+        opts.graph.unrotate,
+      );
+    }
+    ctx.restore();
+  }
+
+  function paintFlowStepCardOnTop(ctx: CanvasRenderingContext2D, globalScale: number) {
+    if (overlayLabels() || !spotlightId) return;
+    const node = liveNodeById(spotlightId);
+    if (!node || node.x == null || node.y == null || !isShown(node) || !flowStepCard(node)) return;
+    const nodeScale = scaleFor(node);
+    paintFlowStepPreviewCard(ctx, node, globalScale, {
+      r: dotRadius(node, globalScale, nodeScale),
+      cardScale: flowCardScale(settings),
+      border: nodeColor(node, settings.colorBy),
+      selected: selectedSet.has(node.id),
+      connecting: node.id === connectFrom,
+      spotlight: true,
+      showText: titlesOn(),
+      nodeAlpha: nodePaintAlpha(node),
+      graph: { x: node.x, y: node.y, unrotate: labelUnrotate() },
+    });
+  }
+
+  function finishMapFrame(ctx: CanvasRenderingContext2D, globalScale: number) {
+    paintFlowStepCardOnTop(ctx, globalScale);
+    paintUprightLabels(globalScale);
+  }
+
   function paintUprightLabels(globalScale: number) {
     const canvas = labelCanvasRef.current;
     if (!canvas) return;
@@ -1008,14 +1186,11 @@ function GraphCanvas({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, width, height);
-    if (!overlayLabels() || settings.showText === false) return;
+    if (!overlayLabels()) return;
+    if (!titlesOn() && !spotlightId) return;
     const fg = graphRef.current;
     if (!fg?.graph2ScreenCoords) return;
     const { ox, oy } = viewCoverOffset(width, height);
-    const nodeScale = viewScale(settings.enlarge);
-    const cardScale = viewScale(settings.cardScale, nodeScale);
-    const textScale = viewScale(settings.textScale, nodeScale);
-    const asCard = cardsAtZoom(Boolean(settings.cardInfo), globalScale);
 
     const screenOfNode = (x: number, y: number) => {
       const s = fg.graph2ScreenCoords(x, y);
@@ -1025,55 +1200,21 @@ function GraphCanvas({
     for (const node of liveEngineNodes()) {
       if (node.x == null || node.y == null) continue;
       if (!isShown(node)) continue;
+      if (!titlesOn() && node.id !== spotlightId) continue;
       const dim = isFlowDim(node);
       const searchHit = Boolean(mapSearch.trim()) && !searchMiss(node);
       const selected = selectedSet.has(node.id);
       const hovered = node.id === hoveredId;
       const connecting = node.id === connectFrom;
+      const nodeScale = scaleFor(node);
+      const spotlight = node.id === spotlightId;
+      const textScale = viewScale(settings.textScale, nodeScale);
       const r = dotRadius(node, globalScale, nodeScale);
       const p = screenOfNode(node.x, node.y);
       ctx.save();
       ctx.globalAlpha = nodePaintAlpha(node);
-      if (asCard) {
-        const { w, h } = cardBox(node, globalScale, cardScale);
-        const sw = w * globalScale;
-        const sh = h * globalScale;
-        const rx = p.x - sw / 2;
-        const ry = p.y + r * globalScale + 6;
-        const rad = 7;
-        ctx.fillStyle = palette.card;
-        ctx.strokeStyle = selected || connecting ? palette.ring : withAlpha(nodeColor(node, settings.colorBy), 0.85);
-        ctx.lineWidth = selected ? 1.5 : 1;
-        ctx.beginPath();
-        ctx.moveTo(rx + rad, ry);
-        ctx.arcTo(rx + sw, ry, rx + sw, ry + sh, rad);
-        ctx.arcTo(rx + sw, ry + sh, rx, ry + sh, rad);
-        ctx.arcTo(rx, ry + sh, rx, ry, rad);
-        ctx.arcTo(rx, ry, rx + sw, ry, rad);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.rect(rx, ry, sw, sh);
-        ctx.clip();
-        const titlePad = sw - 16;
-        const titleFit = fitWrappedText(ctx, node.title, titlePad, 1, 12 * textScale, 600);
-        ctx.fillStyle = palette.cardText;
-        ctx.font = `600 ${titleFit.fontPx}px ${LABEL_FONT}`;
-        ctx.textAlign = "left";
-        ctx.textBaseline = "top";
-        titleFit.lines.forEach((line, i) => {
-          ctx.fillText(line, rx + 8, ry + 8 + i * (titleFit.fontPx + 3));
-        });
-        if (node.description) {
-          const bodyFit = fitWrappedText(ctx, node.description, titlePad, 2, 10.5 * textScale, 400);
-          ctx.fillStyle = palette.cardMuted;
-          ctx.font = `400 ${bodyFit.fontPx}px ${LABEL_FONT}`;
-          const bodyY = ry + 8 + titleFit.lines.length * (titleFit.fontPx + 3) + 4;
-          bodyFit.lines.forEach((line, i) => {
-            ctx.fillText(line, rx + 8, bodyY + i * (bodyFit.fontPx + 3));
-          });
-        }
+      if (flowStepCard(node)) {
+        /* flow card paints last on this overlay */
       } else if (shouldLabel(node, globalScale, selected, hovered, searchHit)) {
         ctx.globalAlpha =
           nodePaintAlpha(node) *
@@ -1098,7 +1239,7 @@ function GraphCanvas({
       const src = placeFrom ? graphData.nodes.find((n) => n.id === placeFrom) : null;
       const ghostLevel = src ? src.level + 1 : 2;
       const ghostSize = placeSize ?? sizeForLevel(ghostLevel);
-      const r = dotRadius({ size: ghostSize, level: ghostLevel } as GraphNode, globalScale, nodeScale);
+      const r = dotRadius({ size: ghostSize, level: ghostLevel } as GraphNode, globalScale, viewScale(settings.enlarge));
       ctx.save();
       ctx.globalAlpha = 0.9;
       ctx.fillStyle = palette.label;
@@ -1108,27 +1249,49 @@ function GraphCanvas({
       ctx.fillText("New idea", p.x, p.y + r * globalScale + 4);
       ctx.restore();
     }
+
+    if (spotlightId) {
+      const node = liveNodeById(spotlightId);
+      if (node?.x != null && node.y != null && isShown(node) && flowStepCard(node)) {
+        const nodeScale = scaleFor(node);
+        const r = dotRadius(node, globalScale, nodeScale);
+        const p = screenOfNode(node.x, node.y);
+        const { w, h } = previewCardGraphBox(globalScale, flowCardScale(settings), Boolean(node.description?.trim()));
+        const sw = w * globalScale;
+        const sh = h * globalScale;
+        paintFlowStepPreviewCard(ctx, node, globalScale, {
+          r,
+          cardScale: flowCardScale(settings),
+          border: nodeColor(node, settings.colorBy),
+          selected: selectedSet.has(node.id),
+          connecting: node.id === connectFrom,
+          spotlight: true,
+          showText: titlesOn(),
+          nodeAlpha: nodePaintAlpha(node),
+          screen: { rx: p.x - sw / 2, ry: p.y + r * globalScale + 6 },
+        });
+      }
+    }
   }
 
   function nodeAt(clientX: number, clientY: number, extraPad = 0) {
     const g = graphAtClient(clientX, clientY);
     const k = zoomK();
-    const nodeScale = viewScale(settings.enlarge);
-    const cardScale = viewScale(settings.cardScale, nodeScale);
-    const cards = cardsAtZoom(Boolean(settings.cardInfo), k);
     const pickSlack = connectArmed || placeArmed ? 20 : 14;
     let best: GraphNode | null = null;
     let bestD = Infinity;
     for (const n of liveEngineNodes()) {
       if (n.x == null || n.y == null || !isShown(n)) continue;
+      const nodeScale = scaleFor(n);
+      const cardScale = flowCardScale(settings);
       const r = nodePickRadius(n, k, nodeScale, pickSlack + extraPad);
       const d = Math.hypot(n.x - g.x, n.y - g.y);
       if (d <= r && d < bestD) {
         best = n;
         bestD = d;
       }
-      if (cards) {
-        const box = cardBox(n, k, cardScale);
+      if (flowStepCard(n)) {
+        const box = previewCardGraphBox(k, cardScale, Boolean(n.description?.trim()));
         const discR = dotRadius(n, k, nodeScale);
         const local = labelUnrotate()
           ? rotatePoint(g.x, g.y, n.x, n.y, rotationRef.current)
@@ -1319,6 +1482,8 @@ function GraphCanvas({
         ctx.fill();
         ctx.stroke();
       }
+      ctx.restore();
+      if (highlightFlow) continue;
       const apex = hulls.reduce<ReturnType<typeof hullApex>>((best, hull) => {
         const tip = hullApex(hull);
         if (!tip) return best;
@@ -1332,7 +1497,11 @@ function GraphCanvas({
       labelWidths.set(group.id, measureGroupLabelWidth(ctx, title));
       labelAnchors.push({ id: group.id, sx: screen.x, sy: screen.y, title });
       labelPaint.push({ id: group.id, color, fade, hovered, title });
-      ctx.restore();
+    }
+
+    if (highlightFlow) {
+      groupLabelHitRef.current = [];
+      return;
     }
 
     const placements = layoutGroupLabels(
@@ -1383,51 +1552,82 @@ function GraphCanvas({
     linkForce?.strength?.(REST_LINK_STRENGTH);
   }
 
-  function applyElasticDragDelta(pinnedIds: Set<string>, dx: number, dy: number) {
-    if (!dx && !dy) return;
-    const physics = settingsRef.current.physics;
-    const adj = buildUndirectedAdjacency(linksRef.current, (source, target) => {
+  function dragAdjacency() {
+    return buildUndirectedAdjacency(linksRef.current, (source, target) => {
       return isShown(nodeById.get(source)) && isShown(nodeById.get(target));
     });
-    const hopLimit = physics ? ELASTIC_HOPS_PHYSICS : ELASTIC_HOPS_NO_PHYSICS;
-    const followers = nodesWithinHops(pinnedIds, adj, hopLimit);
+  }
+
+  function freezeUnrelatedForDrag(pinnedIds: Set<string>, neighbors: Set<string>) {
+    if (dragFreezeRef.current) return;
+    const freeze = new Set<string>();
+    for (const n of liveEngineNodes()) {
+      if (pinnedIds.has(n.id) || neighbors.has(n.id)) continue;
+      n.fx = n.x ?? 0;
+      n.fy = n.y ?? 0;
+      n.vx = 0;
+      n.vy = 0;
+      freeze.add(n.id);
+    }
+    dragFreezeRef.current = freeze;
+  }
+
+  function thawDragFreeze() {
+    const freeze = dragFreezeRef.current;
+    if (!freeze) return;
+    for (const n of liveEngineNodes()) {
+      if (!freeze.has(n.id)) continue;
+      n.fx = undefined;
+      n.fy = undefined;
+      n.vx = 0;
+      n.vy = 0;
+    }
+    dragFreezeRef.current = null;
+  }
+
+  function applyElasticDragDelta(pinnedIds: Set<string>, dx: number, dy: number) {
+    if (!dx && !dy) return;
+    const neighbors = nodesWithinHops(pinnedIds, dragAdjacency(), DRAG_NEIGHBOR_HOPS);
+    freezeUnrelatedForDrag(pinnedIds, neighbors);
 
     for (const n of liveEngineNodes()) {
-      const pin = pinnedIds.has(n.id);
-      const follow = followers.has(n.id);
-      if (!pin && !follow) continue;
-      n.x = (n.x ?? 0) + dx;
-      n.y = (n.y ?? 0) + dy;
-      if (pin) {
+      if (pinnedIds.has(n.id)) {
+        n.x = (n.x ?? 0) + dx;
+        n.y = (n.y ?? 0) + dy;
+        n.fx = n.x;
+        n.fy = n.y;
+        n.vx = 0;
+        n.vy = 0;
+      } else if (neighbors.has(n.id)) {
+        n.x = (n.x ?? 0) + dx * DRAG_NEIGHBOR_FOLLOW;
+        n.y = (n.y ?? 0) + dy * DRAG_NEIGHBOR_FOLLOW;
         n.fx = n.x;
         n.fy = n.y;
         n.vx = 0;
         n.vy = 0;
       } else {
-        n.fx = undefined;
-        n.fy = undefined;
+        n.vx = 0;
+        n.vy = 0;
       }
-    }
-
-    if (physics) {
-      const fg = graphRef.current;
-      const linkForce = fg?.d3Force("link") as { strength?: (n: number) => void } | undefined;
-      linkForce?.strength?.(DRAG_LINK_STRENGTH);
-      fg?.d3ReheatSimulation?.();
-      const fgAlpha = fg as { d3Alpha?: (a?: number) => number | undefined };
-      const cur = fgAlpha.d3Alpha?.();
-      fgAlpha.d3Alpha?.(Math.max(0.42, typeof cur === "number" ? cur : 0));
     }
   }
 
   function elasticDragSaveIds(pinnedIds: Set<string>) {
-    const physics = settingsRef.current.physics;
-    const adj = buildUndirectedAdjacency(linksRef.current, (source, target) => {
-      return isShown(nodeById.get(source)) && isShown(nodeById.get(target));
-    });
-    const hopLimit = physics ? ELASTIC_HOPS_PHYSICS : ELASTIC_HOPS_NO_PHYSICS;
-    const followers = nodesWithinHops(pinnedIds, adj, hopLimit);
-    return new Set([...pinnedIds, ...followers]);
+    const neighbors = nodesWithinHops(pinnedIds, dragAdjacency(), DRAG_NEIGHBOR_HOPS);
+    return new Set([...pinnedIds, ...neighbors]);
+  }
+
+  function endElasticDrag(pinnedIds: Set<string>) {
+    const neighbors = nodesWithinHops(pinnedIds, dragAdjacency(), DRAG_NEIGHBOR_HOPS);
+    for (const n of liveEngineNodes()) {
+      if (!pinnedIds.has(n.id) && !neighbors.has(n.id)) continue;
+      n.fx = undefined;
+      n.fy = undefined;
+      n.vx = 0;
+      n.vy = 0;
+    }
+    thawDragFreeze();
+    restoreDragLinkForces();
   }
 
   function moveSelected(dx: number, dy: number) {
@@ -1667,11 +1867,13 @@ function GraphCanvas({
           sy0: e.clientY,
         };
         setGesture("marquee");
+        graphRef.current?.resumeAnimation?.();
         (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
       }}
       onPointerMove={(e) => {
         if (initRevealRef.current) return;
         cursorGraph.current = graphAtClient(e.clientX, e.clientY);
+        if (placeArmed || connectArmed) graphRef.current?.resumeAnimation?.();
         if (!interaction.current) {
           const overGroupLabel = Boolean(groupLabelAt(e.clientX, e.clientY));
           suppressNodeHoverRef.current = overGroupLabel;
@@ -1701,6 +1903,7 @@ function GraphCanvas({
             last.y = g.y;
           }
           if (Math.hypot(e.clientX - it.sx0, e.clientY - it.sy0) > 5) skipBg.current = true;
+          graphRef.current?.resumeAnimation?.();
         } else if (it.type === "group") {
           const g = graphAtClient(e.clientX, e.clientY);
           const dx = g.x - it.lastX;
@@ -1756,6 +1959,7 @@ function GraphCanvas({
         interaction.current = null;
         if (endDragLivePreview) setDragLivePreview(false);
         setGesture(spaceHeld.current ? "pan" : null);
+        if (it?.type === "marquee") graphRef.current?.resumeAnimation?.();
         const host = hostRef.current;
         if (host) {
           host.style.cursor = groupLabelAt(e.clientX, e.clientY) ? "grab" : "";
@@ -1786,8 +1990,7 @@ function GraphCanvas({
           skipBg.current = true;
           onMarquee(nodesInLasso(it.points).map((n) => n.id), it.mode);
         } else if (it.type === "group") {
-          releaseHeld(selectedSet);
-          restoreDragLinkForces();
+          endElasticDrag(selectedSet);
           const saveIds = elasticDragSaveIds(selectedSet);
           onGroupMoveEnd(
             liveEngineNodes()
@@ -1796,8 +1999,7 @@ function GraphCanvas({
           );
         } else if (it.type === "drag" && it.moved) {
           const idSet = new Set(it.ids);
-          releaseHeld(idSet);
-          restoreDragLinkForces();
+          endElasticDrag(idSet);
           const saveIds = elasticDragSaveIds(idSet);
           onGroupMoveEnd(
             liveEngineNodes()
@@ -1805,7 +2007,7 @@ function GraphCanvas({
               .map((n) => ({ id: n.id, x: n.x as number, y: n.y as number })),
           );
         } else if (it.type === "drag") {
-          restoreDragLinkForces();
+          endElasticDrag(new Set(it.ids));
         } else if (it.type === "groupLabel") {
           const idSet = new Set(it.memberIds);
           releaseHeld(idSet);
@@ -1865,7 +2067,7 @@ function GraphCanvas({
       enablePanInteraction={false}
       enableZoomInteraction={false}
       enablePointerInteraction={connectArmed || placeArmed}
-      autoPauseRedraw={!highlightFlow && !dragLivePreview}
+      autoPauseRedraw={!lookPaint && !highlightFlow && !dragLivePreview && !placeArmed && !connectArmed && gesture !== "marquee"}
       warmupTicks={settings.physics && !revealing ? 20 : 0}
       nodeCanvasObjectMode={() => "replace"}
       onZoom={(t) => onZoom(t.k)}
@@ -1894,13 +2096,12 @@ function GraphCanvas({
         applyElasticDragDelta(selectedSet, translate.x, translate.y);
       }}
       onNodeDragEnd={(n) => {
-        restoreDragLinkForces();
         if (selectedSet.has(n.id) && selectedSet.size > 1) {
-          releaseHeld(selectedSet);
+          endElasticDrag(selectedSet);
           onGroupMoveEnd(selectedPositions());
           return;
         }
-        releaseHeld(new Set([n.id]));
+        endElasticDrag(new Set([n.id]));
         onDragEnd(n.id, n.x ?? 0, n.y ?? 0);
       }}
       onNodeClick={(n, ev) => {
@@ -1961,8 +2162,11 @@ function GraphCanvas({
         const e = linkEnds(l);
         const src = nodeById.get(e.source);
         const tgt = nodeById.get(e.target);
-        const fade = Math.min(revealOpacity(e.source), revealOpacity(e.target)) * linkSearchFade(src, tgt);
-        if (isFlowLinkDim(l)) return fadeColor(palette.linkDim, fade);
+        const fade =
+          Math.min(revealOpacity(e.source), revealOpacity(e.target)) *
+          linkSearchFade(src, tgt) *
+          (isFlowLinkDim(l) ? FLOW_DIM_ALPHA : 1);
+        if (isFlowLinkDim(l)) return fadeColor(palette.link, fade);
         const pulse = flowPulseAmount(l);
         if (pulse > 0.05) return fadeColor(pulseStroke(pulse, theme), fade);
         const onFlow = highlightFlow && isFlowLink(l, highlightFlow.hops);
@@ -1988,8 +2192,11 @@ function GraphCanvas({
         const e = linkEnds(l);
         const src = nodeById.get(e.source);
         const tgt = nodeById.get(e.target);
-        const fade = Math.min(revealOpacity(e.source), revealOpacity(e.target)) * linkSearchFade(src, tgt);
-        if (isFlowLinkDim(l)) return fadeColor(palette.linkDim, fade);
+        const fade =
+          Math.min(revealOpacity(e.source), revealOpacity(e.target)) *
+          linkSearchFade(src, tgt) *
+          (isFlowLinkDim(l) ? FLOW_DIM_ALPHA : 1);
+        if (isFlowLinkDim(l)) return fadeColor(palette.link, fade);
         const pulse = flowPulseAmount(l);
         if (pulse > 0.05) return fadeColor(pulseStroke(pulse, theme), fade);
         const onFlow = highlightFlow && isFlowLink(l, highlightFlow.hops);
@@ -2003,13 +2210,16 @@ function GraphCanvas({
         const src = typeof link.source === "object" ? link.source as GraphNode : nodeById.get(String(link.source));
         const tgt = typeof link.target === "object" ? link.target as GraphNode : nodeById.get(String(link.target));
         if (!src || !tgt || !isShown(src) || !isShown(tgt) || src.x == null || src.y == null || tgt.x == null || tgt.y == null) return;
-        ctx.globalAlpha = Math.min(revealOpacity(src.id), revealOpacity(tgt.id)) * linkSearchFade(src, tgt);
+        ctx.globalAlpha =
+          Math.min(revealOpacity(src.id), revealOpacity(tgt.id)) *
+          linkSearchFade(src, tgt) *
+          (isFlowLinkDim(link) ? FLOW_DIM_ALPHA : 1);
         const e = linkEnds(link);
         const pulse = flowPulseAmount(link);
         const hot = link.id === selectedLinkId || selectedSet.has(e.source) || selectedSet.has(e.target);
         const onFlow = highlightFlow && isFlowLink(link, highlightFlow.hops);
         ctx.fillStyle = isFlowLinkDim(link)
-          ? palette.linkDim
+          ? palette.link
           : pulse > 0.05
             ? pulseStroke(pulse, theme)
             : onFlow || hot
@@ -2030,13 +2240,12 @@ function GraphCanvas({
       nodePointerAreaPaint={(node, color, ctx, globalScale) => {
         if (!isShown(node)) return;
         ctx.fillStyle = color;
-        const nodeScale = viewScale(settings.enlarge);
-        const cardScale = viewScale(settings.cardScale, nodeScale);
-        const showCard = cardsAtZoom(Boolean(settings.cardInfo), globalScale);
+        const nodeScale = scaleFor(node);
+        const cardScale = flowCardScale(settings);
         const pickSlack = connectArmed || placeArmed ? 20 : 14;
-        if (showCard) {
+        if (flowStepCard(node)) {
           const r = dotRadius(node, globalScale, nodeScale);
-          const { w, h } = cardBox(node, globalScale, cardScale);
+          const { w, h } = previewCardGraphBox(globalScale, cardScale, Boolean(node.description?.trim()));
           ctx.fillRect((node.x ?? 0) - w / 2, (node.y ?? 0) + r + 6 / globalScale, w, h);
           ctx.beginPath();
           ctx.arc(node.x ?? 0, node.y ?? 0, nodePickRadius(node, globalScale, nodeScale, pickSlack), 0, Math.PI * 2);
@@ -2058,12 +2267,12 @@ function GraphCanvas({
         const selected = selectedSet.has(node.id);
         const hovered = node.id === hoveredId;
         const connecting = node.id === connectFrom;
-        const nodeScale = viewScale(settings.enlarge);
-        const cardScale = viewScale(settings.cardScale, nodeScale);
+        const nodeScale = scaleFor(node);
+        const spotlight = Boolean(spotlightId && node.id === spotlightId);
         const textScale = viewScale(settings.textScale, nodeScale);
         const r = dotRadius(node, globalScale, nodeScale);
-        const asCard = cardsAtZoom(Boolean(settings.cardInfo), globalScale);
-        const showText = settings.showText !== false;
+        const asCard = flowStepCard(node);
+        const showText = titlesOn();
         const unrotate = labelUnrotate();
         ctx.save();
         ctx.globalAlpha = nodePaintAlpha(node);
@@ -2090,6 +2299,12 @@ function GraphCanvas({
           unassigned: !email,
           unrotate,
         });
+        if (spotlight) {
+          traceNodeClassPath(ctx, x, y, r + 5.5 / globalScale, cls);
+          ctx.strokeStyle = palette.ring;
+          ctx.lineWidth = 2.6 / globalScale;
+          ctx.stroke();
+        }
         if (selected || connecting) {
           traceNodeClassPath(ctx, x, y, r + 2.2 / globalScale, cls);
           ctx.strokeStyle = connecting ? palette.connectRing : palette.ring;
@@ -2106,52 +2321,8 @@ function GraphCanvas({
         }
 
         if (overlayLabels()) {
-          /* labels/cards paint on the unrotated overlay so they stay sharp */
-        } else if (asCard) {
-          const { w, h } = cardBox(node, globalScale, cardScale);
-          ctx.globalAlpha = nodePaintAlpha(node);
-          inScreenSpace(ctx, x, y, globalScale, (k) => {
-            const sw = w * k;
-            const sh = h * k;
-            const rx = -sw / 2;
-            const ry = r * k + 6;
-            const rad = 7;
-            ctx.fillStyle = palette.card;
-            ctx.strokeStyle = selected || connecting ? palette.ring : withAlpha(border, 0.85);
-            ctx.lineWidth = selected ? 1.5 : 1;
-            ctx.beginPath();
-            ctx.moveTo(rx + rad, ry);
-            ctx.arcTo(rx + sw, ry, rx + sw, ry + sh, rad);
-            ctx.arcTo(rx + sw, ry + sh, rx, ry + sh, rad);
-            ctx.arcTo(rx, ry + sh, rx, ry, rad);
-            ctx.arcTo(rx, ry, rx + sw, ry, rad);
-            ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
-            if (!showText) return;
-            ctx.beginPath();
-            ctx.rect(rx, ry, sw, sh);
-            ctx.clip();
-            const titlePad = sw - 16;
-            const titleFit = fitWrappedText(ctx, node.title, titlePad, 1, 12 * textScale, 600);
-            ctx.fillStyle = palette.cardText;
-            ctx.font = `600 ${titleFit.fontPx}px ${LABEL_FONT}`;
-            ctx.textAlign = "left";
-            ctx.textBaseline = "top";
-            titleFit.lines.forEach((line, i) => {
-              ctx.fillText(line, rx + 8, ry + 8 + i * (titleFit.fontPx + 3));
-            });
-            if (node.description) {
-              const bodyFit = fitWrappedText(ctx, node.description, titlePad, 2, 10.5 * textScale, 400);
-              ctx.fillStyle = palette.cardMuted;
-              ctx.font = `400 ${bodyFit.fontPx}px ${LABEL_FONT}`;
-              const bodyY = ry + 8 + titleFit.lines.length * (titleFit.fontPx + 3) + 4;
-              bodyFit.lines.forEach((line, i) => {
-                ctx.fillText(line, rx + 8, bodyY + i * (bodyFit.fontPx + 3));
-              });
-            }
-          }, unrotate);
-        } else if (showText && shouldLabel(node, globalScale, selected, hovered, searchHit)) {
+          /* labels paint on the unrotated overlay; flow step card paints in finishMapFrame */
+        } else if (!asCard && showText && shouldLabel(node, globalScale, selected, hovered, searchHit)) {
           ctx.globalAlpha = nodePaintAlpha(node) * smoothstep(0.28, 0.7, globalScale || 0.3);
           if (selected || hovered || node.level <= 1) ctx.globalAlpha = nodePaintAlpha(node);
           inScreenSpace(ctx, x, y, globalScale, (k) => {
@@ -2198,7 +2369,7 @@ function GraphCanvas({
           ctx.save();
           ctx.fillStyle = subtract
             ? "rgba(244, 63, 94, 0.12)"
-            : theme === "dark" ? "rgba(91, 155, 213, 0.14)" : "rgba(27, 58, 107, 0.08)";
+            : theme === "dark" ? "rgba(241, 93, 42, 0.16)" : "rgba(36, 51, 138, 0.1)";
           ctx.strokeStyle = subtract ? "#f43f5e" : palette.ring;
           ctx.lineWidth = 1.1 / globalScale;
           if (region.length >= 3) {
@@ -2229,7 +2400,7 @@ function GraphCanvas({
             inScreenSpace(ctx, tip.x, tip.y, globalScale, () => {
               ctx.font = "600 11px \"Segoe UI\", sans-serif";
               const w = ctx.measureText(text).width + 12;
-              ctx.fillStyle = subtract ? "#be123c" : "rgba(27, 58, 107, 0.92)";
+              ctx.fillStyle = subtract ? "#ce451d" : "#231b4b";
               ctx.beginPath();
               ctx.roundRect(12, 10, w, 20, 10);
               ctx.fill();
@@ -2245,7 +2416,7 @@ function GraphCanvas({
           if (hull) {
             ctx.save();
             ctx.strokeStyle = palette.ring;
-            ctx.fillStyle = theme === "dark" ? "rgba(245, 245, 245, 0.04)" : "rgba(27, 58, 107, 0.04)";
+            ctx.fillStyle = theme === "dark" ? "rgba(241, 243, 247, 0.05)" : "rgba(36, 51, 138, 0.06)";
             ctx.lineWidth = 1 / globalScale;
             ctx.setLineDash([5 / globalScale, 4 / globalScale]);
             ctx.fillRect(hull.x, hull.y, hull.w, hull.h);
@@ -2279,7 +2450,7 @@ function GraphCanvas({
         }
         const cur = cursorGraph.current;
         if (!cur) {
-          paintUprightLabels(globalScale);
+          finishMapFrame(ctx, globalScale);
           return;
         }
         if (placeArmed) {
@@ -2328,11 +2499,11 @@ function GraphCanvas({
             });
           }
           ctx.restore();
-          paintUprightLabels(globalScale);
+          finishMapFrame(ctx, globalScale);
           return;
         }
         if (!connectFrom) {
-          paintUprightLabels(globalScale);
+          finishMapFrame(ctx, globalScale);
           return;
         }
         const src = graphData.nodes.find((n) => n.id === connectFrom);
@@ -2355,7 +2526,7 @@ function GraphCanvas({
           drawArrowHead(ctx, cur.x, cur.y, src.x, src.y, head);
         }
         ctx.restore();
-        paintUprightLabels(globalScale);
+        finishMapFrame(ctx, globalScale);
         } finally {
           liveFrameRef.current = null;
         }
@@ -2377,7 +2548,6 @@ function lookSettingsEqual(a: GraphSettings, b: GraphSettings) {
     a.textScale === b.textScale &&
     a.cardScale === b.cardScale &&
     a.colorBy === b.colorBy &&
-    a.cardInfo === b.cardInfo &&
     a.showText === b.showText
   );
 }
@@ -2403,6 +2573,7 @@ function canvasPropsEqual(prev: Props, next: Props) {
     prev.hideFiltered === next.hideFiltered &&
     prev.highlightIds === next.highlightIds &&
     prev.highlightFlow === next.highlightFlow &&
+    prev.spotlightId === next.spotlightId &&
     prev.theme === next.theme &&
     prev.rotation === next.rotation &&
     prev.uprightText === next.uprightText &&

@@ -47,11 +47,11 @@ export default function ClassPicker({ value, accent, compact = false, onSelect }
             key={id}
             type="button"
             className={cx(
-              "flex cursor-pointer flex-col items-center justify-center border bg-transparent text-[var(--muted)]",
-              compact ? "gap-0.5 rounded-md px-1 py-1" : "gap-1 rounded-lg px-1.5 py-2",
+              "flex cursor-pointer flex-col items-center justify-center border border-[var(--line)] bg-[var(--input)] font-sans text-[var(--muted)]",
+              compact ? "gap-0.5 rounded-md px-1 py-1" : "gap-1 rounded-lg px-1.5 py-[7px]",
               on
-                ? "border-[var(--edit-accent,var(--accent))] bg-[color-mix(in_srgb,var(--edit-accent,var(--accent))_18%,transparent)] text-[var(--text)]"
-                : "border-[var(--line)] hover:border-[var(--muted)] hover:text-[var(--text)]",
+                ? "border-[var(--edit-accent,var(--accent))] bg-[color-mix(in_srgb,var(--edit-accent,var(--accent))_18%,var(--input))] text-[var(--text)]"
+                : "hover:bg-[var(--hover)] hover:text-[var(--text)]",
             )}
             title={label}
             aria-label={label}

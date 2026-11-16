@@ -4,7 +4,7 @@ import type { GraphLink, GraphNode } from "../types";
 export const CORE_ORIGIN_ID = "prime-pm-root";
 
 /** Fixed speed for highlight-flow link pulse (not user-configurable). */
-export const FLOW_HIGHLIGHT_PULSE_SPEED = 0.7;
+export const FLOW_HIGHLIGHT_PULSE_SPEED = 1.6;
 
 export function findOriginId(nodes: GraphNode[]): string | null {
   if (!nodes.length) return null;
@@ -88,12 +88,12 @@ export function hopGlow(hop: number, front: number, maxHop: number) {
 
 export function pulseStroke(amount: number, theme: "light" | "dark") {
   const a = Math.min(1, Math.max(0, amount));
-  if (theme === "dark") return `rgba(186, 230, 253, ${0.5 + a * 0.5})`;
-  return `rgba(18, 28, 44, ${0.38 + a * 0.55})`;
+  if (theme === "dark") return `rgba(241, 93, 42, ${0.55 + a * 0.45})`;
+  return `rgba(35, 27, 75, ${0.4 + a * 0.55})`;
 }
 
 export function pulseHalo(amount: number, theme: "light" | "dark") {
   const a = Math.min(1, Math.max(0, amount));
-  if (theme === "dark") return `rgba(125, 211, 252, ${0.16 + a * 0.32})`;
-  return `rgba(27, 58, 107, ${0.08 + a * 0.18})`;
+  if (theme === "dark") return `rgba(241, 93, 42, ${0.16 + a * 0.34})`;
+  return `rgba(36, 51, 138, ${0.1 + a * 0.2})`;
 }

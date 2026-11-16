@@ -49,13 +49,7 @@ export default function GroupDeleteModal({ impact, onConfirm, onCancel }: Props)
         <p id="groupDeleteBody" className="mt-0 mb-3 text-[13px] leading-snug text-[var(--muted)]">
           {empty
             ? "This group has no nested groups or assigned nodes. This cannot be undone."
-            : [
-                `This removes ${summary(impact)}.`,
-                impact.memberCount ? "Assigned nodes become ungrouped." : null,
-                "This cannot be undone.",
-              ]
-                .filter(Boolean)
-                .join(" ")}
+            : [removalSentence(impact), memberSentence(impact), "This cannot be undone."].filter(Boolean).join(" ")}
         </p>
         {impact.nestedGroups.length ? (
           <ImpactList
@@ -89,12 +83,21 @@ export default function GroupDeleteModal({ impact, onConfirm, onCancel }: Props)
   );
 }
 
-function summary(impact: GroupDeleteImpact) {
+function removalSentence(impact: GroupDeleteImpact) {
   const bits = [
     impact.childCount ? `${impact.childCount} nested group${impact.childCount === 1 ? "" : "s"}` : "",
     impact.memberCount ? `${impact.memberCount} assigned node${impact.memberCount === 1 ? "" : "s"}` : "",
   ].filter(Boolean);
-  return bits.join(" and ");
+  return bits.length ? `This removes ${bits.join(" and ")}.` : null;
+}
+
+function memberSentence(impact: GroupDeleteImpact) {
+  if (!impact.memberCount) return null;
+  if (impact.destination) return `Assigned nodes move to ${impact.destination.title}.`;
+  if (impact.parentTitle) {
+    return `Assigned nodes become ungrouped. ${impact.parentTitle} still has other groups, so it cannot hold nodes.`;
+  }
+  return "Assigned nodes become ungrouped.";
 }
 
 function ImpactList({

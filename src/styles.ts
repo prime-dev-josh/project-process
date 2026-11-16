@@ -6,7 +6,7 @@ export const ghostBtn =
   "cursor-pointer rounded-lg border border-[var(--line)] bg-[var(--input)] px-2.5 py-1.5 font-sans text-xs text-[var(--text)] hover:bg-[var(--hover)]";
 
 export const primaryBtn =
-  "cursor-pointer rounded-lg border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 font-sans text-xs font-bold text-white";
+  "cursor-pointer rounded-lg border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 font-sans text-xs font-bold text-[var(--brand-ink)]";
 
 export const dangerText = "text-red-500";
 

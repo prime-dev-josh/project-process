@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import { parseGraphDocument } from "../schema/graph";
 import type { GraphGroup, GraphNode } from "../types";
+import { UNGROUPED_FILTER } from "./groups";
 import {
   addChildGroup,
   canAssignGroup,
   childrenOf,
   deleteGroup,
   groupDeleteImpact,
+  inheritGroupFromFilter,
   isLeaf,
   leafGroups,
   reparentGroup,
@@ -90,6 +92,37 @@ describe("group tree", () => {
     assert.deepEqual(next.groups.map((item) => item.id), ["Keep"]);
     assert.equal(next.nodes.find((item) => item.id === "n1")?.groupId, null);
     assert.equal(next.nodes.find((item) => item.id === "n2")?.groupId, "Keep");
+  });
+
+  it("moves members onto the parent when deleting its last child", () => {
+    const groups = [group("Parent"), group("Leaf", "Parent")];
+    const nodes = [node("n1", "Leaf")];
+    const next = deleteGroup(groups, nodes, "Leaf");
+    assert.deepEqual(next.groups.map((item) => item.id), ["Parent"]);
+    assert.equal(next.nodes[0]?.groupId, "Parent");
+    const impact = groupDeleteImpact(groups, nodes, "Leaf");
+    assert.equal(impact.destination?.title, "Parent");
+    assert.equal(impact.parentTitle, "Parent");
+  });
+
+  it("ungroups members when the parent still has other groups", () => {
+    const groups = [group("Parent"), group("LeafA", "Parent"), group("LeafB", "Parent")];
+    const nodes = [node("n1", "LeafA")];
+    const next = deleteGroup(groups, nodes, "LeafA");
+    assert.deepEqual(next.groups.map((item) => item.id), ["Parent", "LeafB"]);
+    assert.equal(next.nodes[0]?.groupId, null);
+    const impact = groupDeleteImpact(groups, nodes, "LeafA");
+    assert.equal(impact.destination, null);
+    assert.equal(impact.parentTitle, "Parent");
+  });
+
+  it("inherits a group only from a single leaf filter", () => {
+    const groups = [group("Folder"), group("Leaf", "Folder")];
+    assert.equal(inheritGroupFromFilter(["Leaf"], groups), "Leaf");
+    assert.equal(inheritGroupFromFilter(["Folder"], groups), null);
+    assert.equal(inheritGroupFromFilter(["Leaf", "Folder"], groups), null);
+    assert.equal(inheritGroupFromFilter([UNGROUPED_FILTER], groups), null);
+    assert.equal(inheritGroupFromFilter([], groups), null);
   });
 
   it("lists nested groups and assigned nodes that a delete would affect", () => {

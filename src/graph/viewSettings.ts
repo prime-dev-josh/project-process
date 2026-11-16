@@ -1,7 +1,8 @@
 import { DEFAULT_SETTINGS, graphSettingsSchema, type GraphSettings } from "../schema/graph";
 
-/** Floor for Fit and wheel zoom-out. The organic layout can span far past 0.12. */
+/** Furthest the user (and Fit) can zoom out. Lower lets a huge map shrink more; raising it stops zoom-out sooner. Does not set the intro camera. */
 export const GRAPH_MIN_ZOOM = 0.02;
+/** Closest wheel-zoom and Fit can go. The intro camera uses REVEAL_ZOOM_MAX instead, which is much lower than this. */
 export const GRAPH_MAX_ZOOM = 8;
 
 export const VIEW_SETTING_KEYS = [
@@ -10,7 +11,6 @@ export const VIEW_SETTING_KEYS = [
   "linkDistance",
   "collide",
   "colorBy",
-  "cardInfo",
   "showText",
   "enlarge",
   "textScale",
@@ -26,7 +26,7 @@ export const FORCE_INTENSITY = {
   collide: [8, 28, 60, 110, 180],
 } as const;
 
-/** Five discrete Look slider steps (Node / Text / Card). */
+/** Five discrete Look slider steps (Node / Text / hover card). */
 export const LOOK_SCALE = {
   enlarge: [3, 6, 11, 18, 28],
   textScale: [0.8, 1.2, 1.8, 2.8, 4],
@@ -62,7 +62,7 @@ function withForcedPhysics(settings: GraphSettings): GraphSettings {
     collide: snapForceValue(FORCE_INTENSITY.collide, settings.collide),
     enlarge: snapForceValue(LOOK_SCALE.enlarge, settings.enlarge),
     textScale: snapForceValue(LOOK_SCALE.textScale, settings.textScale ?? settings.enlarge),
-    cardScale: snapForceValue(LOOK_SCALE.cardScale, settings.cardScale ?? settings.enlarge),
+    cardScale: snapForceValue(LOOK_SCALE.cardScale, settings.cardScale ?? settings.textScale ?? settings.enlarge),
   });
 }
 

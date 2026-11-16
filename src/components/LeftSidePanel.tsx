@@ -22,7 +22,6 @@ type Props = {
   onFit: () => void;
   onReorg: () => void;
   onTogglePhysics: () => void;
-  onToggleCards: () => void;
   onUpdateGroup: (groupId: string, patch: { title?: string; color?: string }) => void;
 };
 
@@ -45,7 +44,6 @@ export default function LeftSidePanel({
   onFit,
   onReorg,
   onTogglePhysics,
-  onToggleCards,
   onUpdateGroup,
 }: Props) {
   return (
@@ -70,7 +68,6 @@ export default function LeftSidePanel({
           onFit={onFit}
           onReorg={onReorg}
           onTogglePhysics={onTogglePhysics}
-          onToggleCards={onToggleCards}
           onUpdateGroup={onUpdateGroup}
         />
       </div>

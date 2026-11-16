@@ -96,14 +96,13 @@ export const graphSettingsSchema = z
     collide: z.coerce.number().default(12),
     radial: z.boolean().default(true),
     colorBy: colorBySchema.catch("level"),
-    cardInfo: z.boolean().optional(),
-    showText: z.boolean().optional(),
+    showText: z.boolean().default(true),
     pulse: z.boolean().optional(),
     pulseSpeed: z.coerce.number().optional(),
     enlarge: z.coerce.number().default(1),
     textScale: z.coerce.number().optional(),
+    /** Hover preview card size (device-local view pref). */
     cardScale: z.coerce.number().optional(),
-    nodeView: z.string().optional(),
   })
   .transform((raw) => ({
     physics: raw.physics,
@@ -112,13 +111,12 @@ export const graphSettingsSchema = z
     collide: Math.min(180, Math.max(0, raw.collide)),
     radial: true,
     colorBy: raw.colorBy,
-    cardInfo: typeof raw.cardInfo === "boolean" ? raw.cardInfo : raw.nodeView === "cards",
-    showText: raw.showText !== false,
+    showText: raw.showText,
     pulse: false,
     pulseSpeed: 0.7,
     enlarge: Math.min(28, Math.max(3, raw.enlarge)),
     textScale: Math.min(4, Math.max(0.7, raw.textScale ?? raw.enlarge)),
-    cardScale: Math.min(4, Math.max(0.7, raw.cardScale ?? raw.enlarge)),
+    cardScale: Math.min(4, Math.max(0.7, raw.cardScale ?? raw.textScale ?? raw.enlarge)),
   }));
 
 export const graphDocumentInputSchema = z.object({

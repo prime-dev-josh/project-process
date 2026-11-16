@@ -53,8 +53,52 @@ describe("map export", () => {
       [group("folder"), group("g", "folder")],
     );
     assert.equal(book.parts[0]?.title, "g");
-    assert.equal(book.chapters[0]?.chapter, 1);
-    assert.equal(book.chapters[1]?.chapter, 2);
+    assert.equal(book.parts[0]?.processes.length, 0);
+    assert.deepEqual(book.parts[0]?.other.map((step) => step.id), ["a", "c"]);
+  });
+
+  it("orders a start-to-end process and nests the shorter branch", () => {
+    const nodes = [
+      node({ id: "start", title: "Open", size: 5.5, groupId: "g", description: "Begin" }),
+      node({ id: "main", title: "Main path", groupId: "g" }),
+      node({ id: "side", title: "Side path", groupId: "g" }),
+      node({ id: "merge", title: "Merge", groupId: "g" }),
+      node({ id: "end", title: "Close", size: 6.5, groupId: "g" }),
+      node({ id: "loose", title: "Loose note", groupId: "g", description: "Not on the flow" }),
+    ];
+    const links: GraphLink[] = [
+      { id: "1", source: "start", target: "main", kind: "parent", arrows: "one" },
+      { id: "2", source: "start", target: "side", kind: "cross", arrows: "one" },
+      { id: "3", source: "main", target: "merge", kind: "parent", arrows: "one" },
+      { id: "4", source: "side", target: "merge", kind: "cross", arrows: "one" },
+      { id: "5", source: "merge", target: "end", kind: "parent", arrows: "one" },
+    ];
+    const book = buildDocumentationBook(nodes, links, [group("g")]);
+    const process = book.parts[0]?.processes[0];
+    assert.equal(process?.title, "From Open");
+    assert.equal(process?.number, "1.1");
+    assert.deepEqual(process?.steps.map((step) => step.id), ["start", "main", "merge", "end"]);
+    assert.deepEqual(process?.steps.map((step) => step.number), ["1.1.1", "1.1.2", "1.1.3", "1.1.4"]);
+    const branch = process?.steps[0]?.branches[0];
+    assert.equal(branch?.kind, "branch");
+    assert.equal(branch?.number, "1.1.1.1");
+    assert.deepEqual(branch?.steps.map((step) => step.id), ["side"]);
+    assert.deepEqual(branch?.steps.map((step) => step.number), ["1.1.1.1.1"]);
+    assert.equal(process?.steps.some((step) => step.branches.some((item) => item.steps.some((nested) => nested.id === "merge"))), false);
+    assert.equal(book.parts[0]?.otherNumber, "1.2");
+    assert.deepEqual(book.parts[0]?.other.map((step) => step.number), ["1.2.1"]);
+  });
+
+  it("follows parent links when the map has no start class", () => {
+    const nodes = [
+      node({ id: "a", title: "First", groupId: "g" }),
+      node({ id: "b", title: "Second", groupId: "g", parentId: "a" }),
+      node({ id: "c", title: "Third", groupId: "g", parentId: "b", size: 6.5 }),
+    ];
+    const book = buildDocumentationBook(nodes, [], [group("g")]);
+    assert.deepEqual(book.parts[0]?.processes[0]?.steps.map((step) => step.id), ["a", "b", "c"]);
+    assert.deepEqual(book.parts[0]?.processes[0]?.steps.map((step) => step.number), ["1.1.1", "1.1.2", "1.1.3"]);
+    assert.equal(book.parts[0]?.other.length, 0);
   });
 
   it("lays flowcharts top to bottom and keeps the full title", () => {

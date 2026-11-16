@@ -5,7 +5,7 @@ const STORAGE_KEY = "project-process.panel-widths";
 
 const FALLBACK_DEFAULTS: Record<PanelId, number> = {
   left: 280,
-  edit: 480,
+  edit: 360,
   history: 380,
   info: 360,
 };
@@ -19,7 +19,7 @@ const MIN_WIDTH: Record<PanelId, number> = {
 
 export function defaultPanelWidth(id: PanelId): number {
   if (typeof window === "undefined") return FALLBACK_DEFAULTS[id];
-  if (id === "edit") return Math.round(window.innerWidth * 0.34);
+  if (id === "edit") return Math.round(window.innerWidth * 0.25);
   return FALLBACK_DEFAULTS[id];
 }
 

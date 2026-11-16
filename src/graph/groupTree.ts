@@ -1,5 +1,5 @@
 import type { GraphGroup, GraphNode } from "../types";
-import { groupTitle } from "./groups";
+import { groupTitle, UNGROUPED_FILTER } from "./groups";
 
 export type GroupTreeResult = {
   groups: GraphGroup[];
@@ -136,6 +136,25 @@ export function canAssignGroup(groups: GraphGroup[], groupId: string | null) {
   return groups.some((group) => group.id === groupId) && isLeaf(groups, groupId);
 }
 
+/** The one leaf group a filter is showing, or null when the filter is not a single assignable group. */
+export function inheritGroupFromFilter(groupFilters: string[], groups: GraphGroup[]) {
+  if (groupFilters.length !== 1) return null;
+  const id = groupFilters[0];
+  if (!id || id === UNGROUPED_FILTER) return null;
+  return canAssignGroup(groups, id) ? id : null;
+}
+
+/** Parent that can receive members after this group is removed, or null when they must be ungrouped. */
+export function groupDeleteDestination(groups: GraphGroup[], id: string) {
+  const group = groups.find((item) => item.id === id);
+  if (!group) return null;
+  const parentId = parentKey(group.parentId, group.id);
+  if (!parentId) return null;
+  const remove = new Set(subtreeIds(groups, id));
+  const remaining = groups.filter((item) => !remove.has(item.id));
+  return canAssignGroup(remaining, parentId) ? parentId : null;
+}
+
 export function addChildGroup(
   groups: GraphGroup[],
   nodes: GraphNode[],
@@ -182,9 +201,12 @@ export function reparentGroup(
 export function deleteGroup(groups: GraphGroup[], nodes: GraphNode[], id: string): GroupTreeResult {
   const remove = new Set(subtreeIds(groups, id));
   if (!remove.size) return { groups, nodes };
+  const destination = groupDeleteDestination(groups, id);
   return {
     groups: groups.filter((group) => !remove.has(group.id)),
-    nodes: nodes.map((node) => (node.groupId && remove.has(node.groupId) ? { ...node, groupId: null } : node)),
+    nodes: nodes.map((node) =>
+      node.groupId && remove.has(node.groupId) ? { ...node, groupId: destination } : node,
+    ),
   };
 }
 
@@ -213,6 +235,10 @@ export type GroupDeleteImpact = {
   members: GroupDeleteMember[];
   childCount: number;
   memberCount: number;
+  /** Parent title when this group has a parent, even if that parent cannot hold nodes. */
+  parentTitle: string | null;
+  /** Parent that will receive assigned nodes, when deleting this group leaves it as a leaf. */
+  destination: { id: string; title: string } | null;
 };
 
 export function groupDeleteImpact(groups: GraphGroup[], nodes: GraphNode[], id: string): GroupDeleteImpact {
@@ -232,6 +258,9 @@ export function groupDeleteImpact(groups: GraphGroup[], nodes: GraphNode[], id: 
       },
     ];
   });
+  const parentId = parentKey(byId.get(id)?.parentId, id);
+  const destinationId = groupDeleteDestination(groups, id);
+  const destinationGroup = destinationId ? byId.get(destinationId) : undefined;
   return {
     id,
     ids,
@@ -240,5 +269,7 @@ export function groupDeleteImpact(groups: GraphGroup[], nodes: GraphNode[], id: 
     members,
     childCount: nestedGroups.length,
     memberCount: members.length,
+    parentTitle: parentId ? groupTitle(byId.get(parentId)?.title) : null,
+    destination: destinationGroup ? { id: destinationGroup.id, title: groupTitle(destinationGroup.title) } : null,
   };
 }

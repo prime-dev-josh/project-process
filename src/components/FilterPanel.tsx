@@ -6,7 +6,7 @@ import {
   LOOK_SCALE,
   nearestForceLevel,
 } from "../graph/viewSettings";
-import { cx, field, sideH2 } from "../styles";
+import { cx, field, sideH2, toolBtn, toolBtnOn } from "../styles";
 import type { ColorBy, GraphGroup, GraphNode, GraphSettings } from "../types";
 import type { GroupEditPatch } from "./GroupManager";
 import GraphFilterFacets from "./GraphFilterFacets";
@@ -31,7 +31,6 @@ type Props = {
   onFit: () => void;
   onReorg: () => void;
   onTogglePhysics: () => void;
-  onToggleCards: () => void;
   onResetSettings: () => void;
   onUpdateGroup: (groupId: string, patch: GroupEditPatch) => void;
 };
@@ -54,7 +53,6 @@ export default function FilterPanel({
   onFit,
   onReorg,
   onTogglePhysics,
-  onToggleCards,
   onResetSettings,
   onUpdateGroup,
 }: Props) {
@@ -144,31 +142,23 @@ export default function FilterPanel({
                 else onTogglePhysics();
               }}
             />
-            <p className="mt-2 mb-1 text-[10px] font-semibold tracking-wide text-[var(--muted)] uppercase">
-              Look
-            </p>
-            <SegmentedControl
-              options={[
-                {
-                  id: "text",
-                  label: "Text",
-                  title: "Show or hide node titles",
-                },
-                {
-                  id: "cards",
-                  label: "Cards",
-                  title: "Show info cards when zoomed in",
-                },
-              ]}
-              pressed={[
-                ...(settings.showText ? (["text"] as const) : []),
-                ...(settings.cardInfo ? (["cards"] as const) : []),
-              ]}
-              onSelect={(id) => {
-                if (id === "text") onSettings({ showText: !settings.showText });
-                else onToggleCards();
-              }}
-            />
+            <div className="mt-2 mb-1 flex items-center justify-between gap-2">
+              <p className="m-0 text-[10px] font-semibold tracking-wide text-[var(--muted)] uppercase">
+                Look
+              </p>
+              <button
+                type="button"
+                title="Show or hide node titles on the map"
+                aria-pressed={settings.showText}
+                className={cx(
+                  settings.showText ? toolBtnOn : toolBtn,
+                  "min-w-0 px-1.5 py-0.5 text-[10px] leading-none",
+                )}
+                onClick={() => onSettings({ showText: !settings.showText })}
+              >
+                Titles
+              </button>
+            </div>
             <ForceIntensityRow
               label="Node"
               values={LOOK_SCALE.enlarge}
@@ -184,7 +174,7 @@ export default function FilterPanel({
             <ForceIntensityRow
               label="Card"
               values={LOOK_SCALE.cardScale}
-              value={settings.cardScale ?? settings.enlarge ?? 1}
+              value={settings.cardScale ?? settings.textScale ?? settings.enlarge ?? 1}
               onChange={(cardScale) => onSettings({ cardScale })}
             />
             <div className="mt-2 flex items-center justify-between gap-2">

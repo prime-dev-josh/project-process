@@ -1,16 +1,16 @@
 import { nodeWorkflowStatus, workflowStatusColor } from "./workflowStatus";
 import type { ColorBy, GraphNode, NodeKind } from "../types";
 
-export const LEVEL_COLORS = ["#f43f5e", "#f59e0b", "#34d399"];
+export const LEVEL_COLORS = ["#ce451d", "#ffc63e", "#00ad72"];
 
-/** Shared fill for every canvas node; status is drawn as the border. */
-export const NODE_FILL = "#5b9bd5";
+/** Shared fill for every canvas node; status is drawn as the border. Light indigo. */
+export const NODE_FILL = "#5462ad";
 
 export const TYPE_COLORS: Record<NodeKind, string> = {
-  concept: "#7dd3fc",
-  category: "#e67e22",
-  task: "#34d399",
-  info: "#c4b5fd",
+  concept: "#5462ad",
+  category: "#f15d2a",
+  task: "#00ad72",
+  info: "#00a3bc",
 };
 
 export function sizeForLevel(_level?: number) {
@@ -55,34 +55,34 @@ export function withAlpha(hex: string, alpha: number) {
 export function graphTheme(theme: "light" | "dark") {
   if (theme === "light") {
     return {
-      bg: "#f6f7fb",
-      link: "rgba(36, 50, 138, 0.32)",
-      linkHot: "rgba(36, 50, 138, 0.78)",
-      linkCross: "rgba(240, 93, 42, 0.45)",
-      linkCrossHot: "rgba(240, 93, 42, 0.82)",
-      linkDim: "rgba(36, 50, 138, 0.08)",
-      label: "rgba(28, 23, 64, 0.92)",
-      labelDim: "rgba(28, 23, 64, 0.32)",
+      bg: "#f1f3f7",
+      link: "rgba(35, 27, 75, 0.38)",
+      linkHot: "rgba(36, 51, 138, 0.9)",
+      linkCross: "rgba(241, 93, 42, 0.55)",
+      linkCrossHot: "rgba(206, 69, 29, 0.9)",
+      linkDim: "rgba(35, 27, 75, 0.1)",
+      label: "rgba(35, 27, 75, 0.94)",
+      labelDim: "rgba(35, 27, 75, 0.36)",
       card: "#ffffff",
-      cardText: "#1c1740",
-      cardMuted: "rgba(90, 96, 136, 0.92)",
-      ring: "#24328a",
-      connectRing: "#f05d2a",
+      cardText: "#231b4b",
+      cardMuted: "rgba(84, 98, 173, 0.95)",
+      ring: "#f15d2a",
+      connectRing: "#24338a",
     };
   }
   return {
-    bg: "#231a4b",
-    link: "rgba(247, 246, 251, 0.72)",
+    bg: "#231b4b",
+    link: "rgba(241, 243, 247, 0.62)",
     linkHot: "rgba(255, 255, 255, 0.96)",
-    linkCross: "rgba(240, 93, 42, 0.8)",
-    linkCrossHot: "rgba(255, 140, 96, 1)",
-    linkDim: "rgba(247, 246, 251, 0.18)",
-    label: "rgba(247, 246, 251, 0.94)",
-    labelDim: "rgba(247, 246, 251, 0.34)",
-    card: "#312856",
-    cardText: "#f7f6fb",
-    cardMuted: "rgba(196, 189, 214, 0.9)",
-    ring: "#f05d2a",
-    connectRing: "#f05d2a",
+    linkCross: "rgba(241, 93, 42, 0.85)",
+    linkCrossHot: "rgba(241, 93, 42, 1)",
+    linkDim: "rgba(206, 206, 220, 0.18)",
+    label: "rgba(255, 255, 255, 0.94)",
+    labelDim: "rgba(206, 206, 220, 0.55)",
+    card: "#322c64",
+    cardText: "#ffffff",
+    cardMuted: "rgba(206, 206, 220, 0.9)",
+    ring: "#f15d2a",
+    connectRing: "#5462ad",
   };
 }

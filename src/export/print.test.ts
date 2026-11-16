@@ -50,7 +50,7 @@ describe("documentation folios", () => {
     const first = await pdf(documentationDocument(book.parts, index, null, "")).toBlob();
     assert.ok(first.size > 1000);
     assert.ok(index.has("part:g"));
-    assert.ok(index.has("ch:n0"));
+    assert.ok(index.has("other:g"));
     const range = index.get("part:g");
     assert.ok(range && range.start >= 2);
     const second = await pdf(documentationDocument(book.parts, index, new Map(index), "")).toBlob();

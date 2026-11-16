@@ -1,8 +1,9 @@
 import { sizeFromNodeClass } from "./nodeClass";
+import { canAssignGroup } from "./groupTree";
 import { descendantsOf, linkEnds } from "./visibility";
 import { graphLinkSchema, graphNodeSchema } from "../schema/graph";
 import { newId } from "../storage";
-import type { GraphLink, GraphNode, NodeKind } from "../types";
+import type { GraphGroup, GraphLink, GraphNode, NodeKind } from "../types";
 
 export function blankNode(partial: Partial<GraphNode> & { title?: string }): GraphNode {
   const level = partial.level ?? 0;
@@ -53,10 +54,37 @@ export function addChild(
   };
 }
 
+function sameAssignee(a: GraphNode, b: GraphNode) {
+  const emailA = a.employeeEmail.trim().toLowerCase();
+  const emailB = b.employeeEmail.trim().toLowerCase();
+  if (emailA || emailB) return emailA === emailB;
+  return a.employee.trim().toLowerCase() === b.employee.trim().toLowerCase();
+}
+
+/** Parent end of a parent link, otherwise the shallower node. Ties stay with the source. */
+function higherNode(link: GraphLink, src: GraphNode, tgt: GraphNode) {
+  if (link.kind === "parent") return src;
+  if (src.level !== tgt.level) return src.level < tgt.level ? src : tgt;
+  return src;
+}
+
+export function inheritFromLinkEnds(link: GraphLink, src: GraphNode, tgt: GraphNode, groups: GraphGroup[]) {
+  const higher = higherNode(link, src, tgt);
+  const assignee = sameAssignee(src, tgt) ? src : higher;
+  const groupSource = (src.groupId ?? null) === (tgt.groupId ?? null) ? src : higher;
+  const groupId = groupSource.groupId && canAssignGroup(groups, groupSource.groupId) ? groupSource.groupId : null;
+  return {
+    employee: assignee.employee,
+    employeeEmail: assignee.employeeEmail,
+    groupId,
+  };
+}
+
 export function insertNodeBetween(
   nodes: GraphNode[],
   links: GraphLink[],
   linkId: string,
+  groups: GraphGroup[] = [],
 ): { nodes: GraphNode[]; links: GraphLink[]; id: string } | null {
   const link = links.find((l) => l.id === linkId);
   if (!link) return null;
@@ -67,10 +95,14 @@ export function insertNodeBetween(
 
   const x = ((src.x ?? 0) + (tgt.x ?? 0)) / 2;
   const y = ((src.y ?? 0) + (tgt.y ?? 0)) / 2;
+  const inherited = inheritFromLinkEnds(link, src, tgt, groups);
   const mid = blankNode({
     title: "New step",
     level: Math.min(src.level, tgt.level) + 1,
     type: src.type === tgt.type ? src.type : "concept",
+    employee: inherited.employee,
+    employeeEmail: inherited.employeeEmail,
+    groupId: inherited.groupId,
     x,
     y,
   });

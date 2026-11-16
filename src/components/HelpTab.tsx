@@ -110,9 +110,9 @@ function IcoPeople() {
 function IcoStatus() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
-      <circle cx="3.4" cy="8" r="2" fill="#f87171" />
-      <circle cx="8" cy="8" r="2" fill="#f5b400" />
-      <circle cx="12.6" cy="8" r="2" fill="#4ade80" />
+      <circle cx="3.4" cy="8" r="2" fill="#ce451d" />
+      <circle cx="8" cy="8" r="2" fill="#ffc63e" />
+      <circle cx="12.6" cy="8" r="2" fill="#00ad72" />
     </svg>
   );
 }
@@ -225,7 +225,7 @@ export default function HelpTab() {
           <Card
             icon={<IcoFlow />}
             title="Highlight flow"
-            body={<>Right-click a node and choose Highlight flow. Off-path nodes and links dim; connections on the downstream path brighten and pulse. Travel follows arrow direction from that node (two-way links can run either way). Press <Key>Esc</Key> or choose Clear highlight. This highlight is for your session only — it is not saved to the shared map.</>}
+            body={<>Right-click a node and choose <strong>Follow flow from here</strong>. Off-path nodes and links dim; connections on the downstream path brighten and pulse. The left rail steps through the path: pick a next node when the flow branches, or Back to return. The current step enlarges on the map with its card open. Press <Key>Esc</Key> or choose Clear flow highlight. This highlight is for your session only — it is not saved to the shared map.</>}
           />
         </div>
       </section>
@@ -243,7 +243,7 @@ export default function HelpTab() {
           <Card
             icon={<IcoView />}
             title="View"
-            body="Fit, Reorg, Physics, Text, and Cards live under View. Node, Text, and Card are five-step sliders with a wide scale — Node especially grows discs and Start/End shapes. Reorg untangles overlaps and stretches links — it does not pull the map into a gravity well. Physics must be on for Advanced: five-step Spread, Link length, and Padding sliders apply to the live layout as you move them. View rotation (compass) and these prefs stay on this device — Reset view prefs restores defaults."
+            body="Fit, Reorg, and Physics live under View. Titles (Look) shows or hides node names on the map. Node, Text, and Card are five-step sliders — Node grows discs and Start/End shapes; Card scales the hover preview and the step card while you follow a flow. Reorg untangles overlaps and stretches links — it does not pull the map into a gravity well. Physics must be on for Advanced: five-step Spread, Link length, and Padding sliders apply to the live layout as you move them. View rotation (compass) and these prefs stay on this device — Reset view prefs restores defaults."
           />
         </div>
       </section>
@@ -254,7 +254,7 @@ export default function HelpTab() {
           <Card icon={<IcoLive />} title="Sync updates" body="The bell (bottom right) lists other people's changes. Filter them, mark them read, or click Show to jump to a node." />
           <Card icon={<IcoLive />} title="Offline queue" body="If saving fails, unsaved changes queue above the bell and retry automatically. Use Retry now or Discard if it stays stuck." />
           <Card icon={<IcoHistory />} title="Undo" body={<>Header arrows, or <Key>Ctrl/Cmd+Z</Key> / <Key>Y</Key>. History is local; writes still sync.</>} />
-          <Card icon={<IcoView />} title="Export" body="Export opens a menu: Full CSV of nodes, groups, and links (with hierarchy paths); a portrait flowchart PDF with a PRIME AE cover and one or more pages per selected group; a portrait documentation PDF with a cover, contents, and one section per group; or JSON for a full map file. The PDF opens in a new tab." />
+          <Card icon={<IcoView />} title="Export" body="Export opens a menu: Full CSV of nodes, groups, and links (with hierarchy paths); a portrait flowchart PDF with a PRIME AE cover and one or more pages per selected group; a portrait documentation PDF grouped by group, then by each Start-to-End process (branches nested, leftovers under Other); or JSON for a full map file. The PDF opens in a new tab." />
         </div>
       </section>
 

@@ -5,16 +5,14 @@ export const UNGROUPED_FILTER = "__ungrouped__";
 
 /** Distinct membrane colors so neighboring groups stay readable. */
 export const GROUP_COLORS = [
-  "#f43f5e",
-  "#f5c518",
-  "#38bdf8",
-  "#34d399",
-  "#a78bfa",
-  "#fb923c",
-  "#f472b6",
-  "#2dd4bf",
-  "#818cf8",
-  "#94a3b8",
+  "#f15d2a",
+  "#24338a",
+  "#00a3bc",
+  "#00ad72",
+  "#ffc63e",
+  "#ce451d",
+  "#5462ad",
+  "#231b4b",
 ] as const;
 
 export function groupTitle(title: string | undefined) {

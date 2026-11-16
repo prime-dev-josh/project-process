@@ -47,6 +47,20 @@ export function directedFlowFrom(originId: string, links: GraphLink[]): Directed
   return { hops, maxHop };
 }
 
+/** Next nodes one hop downstream of `id` on the highlighted flow. */
+export function flowOutgoing(id: string, links: GraphLink[], hops: Map<string, number>): string[] {
+  const hop = hops.get(id);
+  if (hop == null) return [];
+  const next: string[] = [];
+  for (const link of links) {
+    if (!isFlowLink(link, hops)) continue;
+    const e = linkEnds(link);
+    if (e.source === id && hops.get(e.target) === hop + 1) next.push(e.target);
+    else if (link.arrows === "both" && e.target === id && hops.get(e.source) === hop + 1) next.push(e.source);
+  }
+  return [...new Set(next)];
+}
+
 /** True when this link lies on the highlighted flow (respects arrow direction). */
 export function isFlowLink(link: GraphLink, hops: Map<string, number>): boolean {
   const e = linkEnds(link);

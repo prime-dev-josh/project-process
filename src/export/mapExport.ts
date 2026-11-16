@@ -15,7 +15,6 @@ export type FlowchartBox = {
   w: number;
   h: number;
   kind: "start" | "process" | "end";
-  status: string;
 };
 
 export type FlowchartEdge = {
@@ -262,7 +261,25 @@ export function buildDocumentation(nodes: GraphNode[], links: GraphLink[], group
   return sections;
 }
 
-export type DocBookChapter = DocSection & { chapter: number };
+export type DocStep = {
+  id: string;
+  /** Outline number under its section, such as `1.2.3` or `1.2.3.1.1`. */
+  number: string;
+  title: string;
+  description: string;
+  /** Side paths that leave this step. The main continuation stays in the parent process. */
+  branches: DocProcess[];
+};
+
+export type DocProcess = {
+  id: string;
+  /** `1.2` for a process, `1.2.3.1` for a branch under that step. */
+  number: string;
+  /** `From {start}` for a process root; the first step's title for a nested branch. */
+  title: string;
+  kind: "process" | "branch";
+  steps: DocStep[];
+};
 
 export type DocBookPart = {
   id: string;
@@ -270,46 +287,244 @@ export type DocBookPart = {
   title: string;
   path: string;
   color: string;
-  chapters: DocBookChapter[];
+  processes: DocProcess[];
+  /** Subsection number for leftovers, after the processes in this section. */
+  otherNumber: string;
+  other: DocStep[];
 };
 
-/** Groups documentation into textbook parts (one part per leaf group). */
+type WalkEdge = { to: string; kind: GraphLink["kind"] };
+type PathScore = { reachesEnd: boolean; hops: number };
+
+function compareNodes(a: GraphNode, b: GraphNode) {
+  return nodeTitle(a).localeCompare(nodeTitle(b)) || a.id.localeCompare(b.id);
+}
+
+/** Directed in-group edges: map links (both-ways either direction) plus parent → child. */
+function documentationWalkGraph(nodes: GraphNode[], links: GraphLink[]) {
+  const ids = new Set(nodes.map((node) => node.id));
+  const outgoing = new Map<string, Map<string, GraphLink["kind"]>>();
+  const inbound = new Map<string, number>();
+  for (const id of ids) {
+    outgoing.set(id, new Map());
+    inbound.set(id, 0);
+  }
+  const add = (from: string, to: string, kind: GraphLink["kind"]) => {
+    if (!ids.has(from) || !ids.has(to) || from === to) return;
+    const edges = outgoing.get(from);
+    if (!edges) return;
+    const prev = edges.get(to);
+    if (prev == null) {
+      edges.set(to, kind);
+      inbound.set(to, (inbound.get(to) ?? 0) + 1);
+      return;
+    }
+    if (prev !== "parent" && kind === "parent") edges.set(to, "parent");
+  };
+  for (const link of links) {
+    const ends = linkEnds(link);
+    add(ends.source, ends.target, link.kind);
+    if (link.arrows === "both") add(ends.target, ends.source, link.kind);
+  }
+  for (const node of nodes) {
+    for (const child of nodeChildren(nodes, node.id)) add(node.id, child.id, "parent");
+  }
+  return { outgoing, inbound };
+}
+
+function isDocEnd(node: GraphNode) {
+  return nodeClassFromSize(node.size) === "end";
+}
+
+function isDocStart(node: GraphNode) {
+  return nodeClassFromSize(node.size) === "start";
+}
+
+/** Longest remaining walk to an in-group End. Already-written nodes are not remaining. */
+function scoreToEnd(
+  id: string,
+  outgoing: Map<string, Map<string, GraphLink["kind"]>>,
+  byId: Map<string, GraphNode>,
+  written: Set<string>,
+  visiting: Set<string>,
+  memo: Map<string, PathScore>,
+): PathScore {
+  if (written.has(id)) return { reachesEnd: false, hops: 0 };
+  const cached = memo.get(id);
+  if (cached) return cached;
+  const node = byId.get(id);
+  if (!node) return { reachesEnd: false, hops: 0 };
+  if (isDocEnd(node)) {
+    const score = { reachesEnd: true, hops: 0 };
+    memo.set(id, score);
+    return score;
+  }
+  if (visiting.has(id)) return { reachesEnd: false, hops: 0 };
+  visiting.add(id);
+  let best: PathScore = { reachesEnd: false, hops: 0 };
+  for (const to of outgoing.get(id)?.keys() ?? []) {
+    if (written.has(to)) continue;
+    const sub = scoreToEnd(to, outgoing, byId, written, visiting, memo);
+    const hops = sub.hops + 1;
+    const betterReach = sub.reachesEnd && !best.reachesEnd;
+    const longerReach = sub.reachesEnd && best.reachesEnd && hops > best.hops;
+    const longerDead = !sub.reachesEnd && !best.reachesEnd && hops > best.hops;
+    if (betterReach || longerReach || longerDead) best = { reachesEnd: sub.reachesEnd, hops };
+  }
+  visiting.delete(id);
+  memo.set(id, best);
+  return best;
+}
+
+function rankedSuccessors(
+  id: string,
+  outgoing: Map<string, Map<string, GraphLink["kind"]>>,
+  byId: Map<string, GraphNode>,
+  written: Set<string>,
+): WalkEdge[] {
+  const edges: WalkEdge[] = [];
+  for (const [to, kind] of outgoing.get(id) ?? []) {
+    if (!written.has(to)) edges.push({ to, kind });
+  }
+  const memo = new Map<string, PathScore>();
+  edges.sort((a, b) => {
+    const left = scoreToEnd(a.to, outgoing, byId, written, new Set(), memo);
+    const right = scoreToEnd(b.to, outgoing, byId, written, new Set(), memo);
+    if (left.reachesEnd !== right.reachesEnd) return left.reachesEnd ? -1 : 1;
+    if (left.hops !== right.hops) return right.hops - left.hops;
+    if (a.kind !== b.kind) return a.kind === "parent" ? -1 : 1;
+    const aNode = byId.get(a.to);
+    const bNode = byId.get(b.to);
+    if (aNode && bNode) return compareNodes(aNode, bNode);
+    return a.to.localeCompare(b.to);
+  });
+  return edges;
+}
+
+function stepFrom(node: GraphNode, branches: DocProcess[] = []): DocStep {
+  return {
+    id: node.id,
+    number: "",
+    title: nodeTitle(node),
+    description: node.description.trim(),
+    branches,
+  };
+}
+
+/**
+ * Follow the longest route to an End first so a branch stops when it merges
+ * back onto nodes already written.
+ */
+function walkProcess(
+  rootId: string,
+  kind: DocProcess["kind"],
+  outgoing: Map<string, Map<string, GraphLink["kind"]>>,
+  byId: Map<string, GraphNode>,
+  written: Set<string>,
+): DocProcess | null {
+  const root = byId.get(rootId);
+  if (!root || written.has(rootId)) return null;
+  const steps: DocStep[] = [];
+  const pending: { index: number; to: string }[] = [];
+  let current: string | null = rootId;
+  while (current && !written.has(current)) {
+    const node = byId.get(current);
+    if (!node) break;
+    written.add(current);
+    const index = steps.length;
+    steps.push(stepFrom(node));
+    if (isDocEnd(node)) break;
+    const next = rankedSuccessors(current, outgoing, byId, written);
+    for (const edge of next.slice(1)) pending.push({ index, to: edge.to });
+    current = next[0]?.to ?? null;
+  }
+  for (const branch of pending) {
+    const nested = walkProcess(branch.to, "branch", outgoing, byId, written);
+    if (!nested) continue;
+    const step = steps[branch.index];
+    if (step) step.branches.push(nested);
+  }
+  if (!steps.length) return null;
+  const title = kind === "process" ? `From ${steps[0]?.title ?? rootId}` : (steps[0]?.title ?? rootId);
+  return { id: rootId, number: "", title, kind, steps };
+}
+
+/** Section → process → step → branch → step. Other follows the processes in the same section. */
+function numberDocumentationOutline(partNumber: number, processes: DocProcess[], other: DocStep[]) {
+  const numberSteps = (steps: DocStep[], parent: string) => {
+    steps.forEach((step, index) => {
+      step.number = `${parent}.${index + 1}`;
+      step.branches.forEach((branch, branchIndex) => {
+        branch.number = `${step.number}.${branchIndex + 1}`;
+        numberSteps(branch.steps, branch.number);
+      });
+    });
+  };
+  processes.forEach((process, index) => {
+    process.number = `${partNumber}.${index + 1}`;
+    numberSteps(process.steps, process.number);
+  });
+  const otherNumber = `${partNumber}.${processes.length + 1}`;
+  numberSteps(other, otherNumber);
+  return otherNumber;
+}
+
+function documentationOutline(nodes: GraphNode[], links: GraphLink[]): { processes: DocProcess[]; other: DocStep[] } {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const { outgoing, inbound } = documentationWalkGraph(nodes, links);
+  const written = new Set<string>();
+  const processes: DocProcess[] = [];
+  const starts = nodes.filter(isDocStart).sort(compareNodes);
+  const roots = starts.length
+    ? starts
+    : nodes
+        .filter((node) => (inbound.get(node.id) ?? 0) === 0 && (outgoing.get(node.id)?.size ?? 0) > 0)
+        .sort(compareNodes);
+  for (const root of roots) {
+    const process = walkProcess(root.id, "process", outgoing, byId, written);
+    if (process) processes.push(process);
+  }
+  const other = nodes
+    .filter((node) => !written.has(node.id))
+    .sort(compareNodes)
+    .map((node) => stepFrom(node));
+  return { processes, other };
+}
+
+/** One section per leaf group. Inside it, Start→End processes with nested branches, then leftovers. */
 export function buildDocumentationBook(
   nodes: GraphNode[],
   links: GraphLink[],
   groups: GraphGroup[],
-): { parts: DocBookPart[]; chapters: DocBookChapter[] } {
-  const sections = buildDocumentation(nodes, links, groups);
+): { parts: DocBookPart[] } {
   const leaves = leafGroups(groups);
   const leafIds = new Set(leaves.map((group) => group.id));
   const parts: DocBookPart[] = [];
-  let chapter = 1;
   let partNo = 1;
-  for (const group of leaves) {
-    const items = sections.filter((section) => section.groupId === group.id);
-    if (!items.length) continue;
-    parts.push({
-      id: group.id,
-      number: partNo,
-      title: groupTitle(group.title),
-      path: groupPath(groups, group.id).join(" / "),
-      color: groupPaintColor(group),
-      chapters: items.map((section) => ({ ...section, chapter: chapter++ })),
-    });
+  const pushPart = (id: string, title: string, path: string, color: string, members: GraphNode[]) => {
+    if (!members.length) return;
+    const outline = documentationOutline(members, links);
+    const otherNumber = numberDocumentationOutline(partNo, outline.processes, outline.other);
+    parts.push({ id, number: partNo, title, path, color, otherNumber, ...outline });
     partNo += 1;
+  };
+  for (const group of leaves) {
+    pushPart(
+      group.id,
+      groupTitle(group.title),
+      groupPath(groups, group.id).join(" / "),
+      groupPaintColor(group),
+      nodes.filter((node) => node.groupId === group.id),
+    );
   }
-  const loose = sections.filter((section) => !section.groupId || !leafIds.has(section.groupId));
-  if (loose.length) {
-    parts.push({
-      id: UNGROUPED_FILTER,
-      number: partNo,
-      title: "Ungrouped",
-      path: "Ungrouped",
-      color: "#94a3b8",
-      chapters: loose.map((section) => ({ ...section, chapter: chapter++ })),
-    });
-  }
-  return { parts, chapters: parts.flatMap((part) => part.chapters) };
+  pushPart(
+    UNGROUPED_FILTER,
+    "Ungrouped",
+    "Ungrouped",
+    "#94a3b8",
+    nodes.filter((node) => !node.groupId || !leafIds.has(node.groupId)),
+  );
+  return { parts };
 }
 
 function flowchartKind(node: GraphNode): FlowchartBox["kind"] {
@@ -463,7 +678,7 @@ export function wrapFlowchartTitle(title: string, innerWidth: number): string[] 
 }
 
 function boxHeightForLines(lineCount: number) {
-  return 16 + lineCount * 15 + 18;
+  return 14 + lineCount * 16 + 12;
 }
 
 function edgesAmong(nodes: GraphNode[], links: GraphLink[], boxes: FlowchartBox[]): FlowchartEdge[] {
@@ -523,7 +738,7 @@ function finishPage(
 }
 
 /** Top-down portrait pages. A group continues onto another page instead of shrinking the type. */
-export function layoutFlowchartPages(nodes: GraphNode[], links: GraphLink[], label = "", color = "#24328a"): FlowchartLayout[] {
+export function layoutFlowchartPages(nodes: GraphNode[], links: GraphLink[], label = "", color = "#24338a"): FlowchartLayout[] {
   if (!nodes.length) {
     return [{ boxes: [], edges: [], width: PAGE_W, height: 220, label, color }];
   }
@@ -573,7 +788,6 @@ export function layoutFlowchartPages(nodes: GraphNode[], links: GraphLink[], lab
           w: boxW,
           h: rowH,
           kind: flowchartKind(node),
-          status: statusLabel(node),
         });
         x += boxW + GAP_X;
       }
@@ -592,7 +806,7 @@ export function layoutFlowchart(nodes: GraphNode[], links: GraphLink[]): Flowcha
       width: PAGE_W,
       height: 220,
       label: "",
-      color: "#24328a",
+      color: "#24338a",
     }
   );
 }

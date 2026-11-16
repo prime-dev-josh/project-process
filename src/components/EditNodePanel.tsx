@@ -14,6 +14,7 @@ import DeferredTextField from "./DeferredTextField";
 import EmployeePicker from "./EmployeePicker";
 import GroupPicker from "./GroupPicker";
 import ClassPicker from "./ClassPicker";
+import HighlightFlowButton from "./HighlightFlowButton";
 
 export type NodeEditPreview = {
   size: number;
@@ -39,13 +40,25 @@ type Props = {
   colorBy: ColorBy;
   variant?: EditNodePanelVariant;
   style?: CSSProperties;
+  flowHighlighted?: boolean;
+  onHighlightFlow?: () => void;
   onSave: (patch: Partial<NodeEditPatch>) => void;
 };
 
 const SAVED_FLASH_MS = 1600;
 const editSectionLabel = cx(fieldLabel, "mt-0 mb-0");
 
-export default function EditNodePanel({ node, nodes, groups, colorBy, variant = "float", style, onSave }: Props) {
+export default function EditNodePanel({
+  node,
+  nodes,
+  groups,
+  colorBy,
+  variant = "float",
+  style,
+  flowHighlighted = false,
+  onHighlightFlow,
+  onSave,
+}: Props) {
   const accent = nodeColor(node, colorBy);
   const unsaved = useStore(draftStore, (s) => s.labels);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -183,6 +196,7 @@ export default function EditNodePanel({ node, nodes, groups, colorBy, variant = 
       </div>
 
       <div className="flex min-w-0 flex-col gap-5">
+        {onHighlightFlow ? <HighlightFlowButton active={flowHighlighted} onClick={onHighlightFlow} /> : null}
         {statusSection}
         {titleSection}
         {descriptionSection}
