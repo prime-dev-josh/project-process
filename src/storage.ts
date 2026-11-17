@@ -1,9 +1,11 @@
+import { looksLikeGraphCsv } from "./export/csv";
+import { parseGraphCsv } from "./export/mapExport";
 import { mergeViewSettings, pickViewSettings } from "./graph/viewSettings";
 import { normalizeDeg } from "./graph/viewRotation";
 import { markAllNodesIncomplete } from "./graph/workflowStatus";
-import { createSampleDocument } from "./sampleData";
 import {
   DEFAULT_SETTINGS,
+  EMPTY_DOCUMENT,
   graphDocumentSchema,
   parseGraphDocument,
   themeSchema,
@@ -39,13 +41,11 @@ export function loadDocument(): GraphDocument {
         saveDocument(migrated);
         return migrated;
       }
-      return createSampleDocument();
+      return EMPTY_DOCUMENT;
     }
-    const doc = parseGraphDocument(JSON.parse(raw));
-    if (!doc.nodes.length) return createSampleDocument();
-    return serializeDocument(doc);
+    return serializeDocument(parseGraphDocument(JSON.parse(raw)));
   } catch {
-    return createSampleDocument();
+    return EMPTY_DOCUMENT;
   }
 }
 
@@ -111,7 +111,21 @@ export function downloadJson(doc: GraphDocument, filename = "project-process-gra
 }
 
 export async function readJsonFile(file: File): Promise<GraphDocument> {
-  const doc = parseGraphDocument(JSON.parse(await file.text()));
-  if (!doc.nodes.length) throw new Error("No nodes in file");
-  return doc;
+  return readGraphFile(file);
+}
+
+export async function readGraphFile(file: File): Promise<GraphDocument> {
+  const text = await file.text();
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".csv") || looksLikeGraphCsv(text)) {
+    return parseGraphCsv(text);
+  }
+  try {
+    const doc = parseGraphDocument(JSON.parse(text));
+    if (!doc.nodes.length) throw new Error("No nodes in file");
+    return doc;
+  } catch (error) {
+    if (looksLikeGraphCsv(text) || text.includes("# Nodes")) return parseGraphCsv(text);
+    throw error instanceof Error ? error : new Error("No nodes in file");
+  }
 }

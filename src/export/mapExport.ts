@@ -1,11 +1,12 @@
 import { childrenOf as nodeChildren, linkEnds } from "../graph/visibility";
 import { childrenOf as groupChildren, groupPath, isLeaf, leafGroups, rootGroups } from "../graph/groupTree";
 import { groupPaintColor, groupTitle, UNGROUPED_FILTER } from "../graph/groups";
-import { nodeClassFromSize, nodeClassLabel } from "../graph/nodeClass";
+import { NODE_CLASS_META, nodeClassFromSize, nodeClassLabel, sizeFromNodeClass, type NodeClass } from "../graph/nodeClass";
 import { KIND_LABEL } from "../graph/ops";
-import { nodeWorkflowStatus, WORKFLOW_STATUS_META } from "../graph/workflowStatus";
+import { nodeWorkflowStatus, WORKFLOW_STATUS_META, workflowStatusColor, type WorkflowStatus } from "../graph/workflowStatus";
+import { parseGraphDocument, type GraphDocument, type NodeKind } from "../schema/graph";
 import type { GraphGroup, GraphLink, GraphNode } from "../types";
-import { csvTable } from "./csv";
+import { csvSections, csvTable } from "./csv";
 
 export type FlowchartBox = {
   id: string;
@@ -146,34 +147,49 @@ export function nodeLinkLists(nodes: GraphNode[], links: GraphLink[]) {
 export function buildFullCsv(nodes: GraphNode[], links: GraphLink[], groups: GraphGroup[]) {
   const groupById = new Map(groups.map((group) => [group.id, group]));
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
-  const nodeRows: Array<Array<string | number>> = [];
+  const nodeOutline = new Map<string, string>();
   walkNodeForest(nodes, (node, _depth, path) => {
-    const groupId = node.groupId ?? "";
-    nodeRows.push([
-      node.id,
-      nodeTitle(node),
-      node.description,
-      outlineNumber(path),
-      node.parentId ?? "",
-      node.parentId ? nodeTitle(nodeById.get(node.parentId) ?? ({ title: "" } as GraphNode)) : "",
-      KIND_LABEL[node.type] ?? node.type,
-      nodeClassLabel(nodeClassFromSize(node.size)),
-      statusLabel(node),
-      node.employee,
-      node.employeeEmail,
-      groupId,
-      groupId ? groupPath(groups, groupId).join(" / ") : "",
-      node.level,
-      node.x ?? "",
-      node.y ?? "",
-    ]);
+    nodeOutline.set(node.id, outlineNumber(path));
   });
+  const nodeRows: Array<Array<string | number>> = [...nodes]
+    .sort((a, b) => {
+      const left = nodeOutline.get(a.id) ?? "\uFFFF";
+      const right = nodeOutline.get(b.id) ?? "\uFFFF";
+      return left.localeCompare(right, undefined, { numeric: true }) || a.id.localeCompare(b.id);
+    })
+    .map((node) => {
+      const groupId = node.groupId ?? "";
+      const cls = nodeClassFromSize(node.size);
+      return [
+        node.id,
+        nodeTitle(node),
+        node.description,
+        nodeOutline.get(node.id) ?? "",
+        node.parentId ?? "",
+        node.parentId ? nodeTitle(nodeById.get(node.parentId) ?? ({ title: "" } as GraphNode)) : "",
+        node.type,
+        KIND_LABEL[node.type] ?? node.type,
+        cls,
+        node.size,
+        statusLabel(node),
+        node.color ?? "",
+        node.employee,
+        node.employeeEmail,
+        groupId,
+        groupId ? groupPath(groups, groupId).join(" / ") : "",
+        node.level,
+        node.x ?? "",
+        node.y ?? "",
+      ];
+    });
 
+  const groupOutline = new Map<string, string>();
   const groupRows: Array<Array<string | number | boolean>> = [];
   const walkGroups = (parentId: string | null, path: number[]) => {
     const kids = parentId == null ? rootGroups(groups) : groupChildren(groups, parentId);
     kids.forEach((group, index) => {
       const next = [...path, index + 1];
+      groupOutline.set(group.id, outlineNumber(next));
       groupRows.push([
         group.id,
         groupTitle(group.title),
@@ -189,6 +205,20 @@ export function buildFullCsv(nodes: GraphNode[], links: GraphLink[], groups: Gra
     });
   };
   walkGroups(null, []);
+  for (const group of groups) {
+    if (groupOutline.has(group.id)) continue;
+    groupRows.push([
+      group.id,
+      groupTitle(group.title),
+      "",
+      group.parentId ?? "",
+      group.parentId ? groupTitle(groupById.get(group.parentId)?.title) : "",
+      groupPath(groups, group.id).join(" / "),
+      isLeaf(groups, group.id) ? "group" : "folder",
+      groupPaintColor(group),
+      group.sortOrder ?? 0,
+    ]);
+  }
 
   const linkRows = links.map((link) => {
     const ends = linkEnds(link);
@@ -211,11 +241,14 @@ export function buildFullCsv(nodes: GraphNode[], links: GraphLink[], groups: Gra
       "outline",
       "parent_id",
       "parent_title",
+      "type",
       "kind",
       "class",
+      "size",
       "status",
-      "assignee",
-      "assignee_email",
+      "color",
+      "employee",
+      "employee_email",
       "group_id",
       "group_path",
       "level",
@@ -234,6 +267,108 @@ export function buildFullCsv(nodes: GraphNode[], links: GraphLink[], groups: Gra
   );
 
   return ["# Nodes", nodesCsv, "", "# Groups", groupsCsv, "", "# Links", linksCsv].join("\r\n");
+}
+
+function csvField(row: Record<string, string>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = row[key];
+    if (value != null && String(value).trim() !== "") return String(value);
+  }
+  return "";
+}
+
+function csvType(raw: string): NodeKind | undefined {
+  const value = raw.trim().toLowerCase();
+  if (value === "concept" || value === "category" || value === "task" || value === "info") return value;
+  const fromLabel = (Object.entries(KIND_LABEL) as Array<[NodeKind, string]>).find(
+    ([, label]) => label.toLowerCase() === value,
+  );
+  return fromLabel?.[0];
+}
+
+function csvClass(raw: string): NodeClass | undefined {
+  const value = raw.trim().toLowerCase();
+  return NODE_CLASS_META.find((item) => item.id === value || item.label.toLowerCase() === value)?.id;
+}
+
+function csvStatus(raw: string): WorkflowStatus | undefined {
+  const value = raw.trim().toLowerCase();
+  if (value === "done" || value === "in_progress" || value === "incomplete") return value;
+  if (value === "wip" || value === "in progress") return "in_progress";
+  if (value === "i") return "incomplete";
+  return WORKFLOW_STATUS_META.find((item) => item.label.toLowerCase() === value)?.id;
+}
+
+function csvNumber(raw: string): number | undefined {
+  const text = raw.trim();
+  if (!text) return undefined;
+  const value = Number(text);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+/** Rebuild a graph document from a Full CSV export (and older CSV columns). */
+export function parseGraphCsv(text: string): GraphDocument {
+  const sections = csvSections(text);
+  const nodeRows = sections.nodes ?? [];
+  const groupRows = sections.groups ?? [];
+  const linkRows = sections.links ?? [];
+  const nodes = nodeRows.flatMap((row) => {
+    const id = csvField(row, "id").trim();
+    if (!id) return [];
+    const cls = csvClass(csvField(row, "class"));
+    const size = csvNumber(csvField(row, "size")) ?? (cls ? sizeFromNodeClass(cls) : undefined);
+    const color = csvField(row, "color") || (csvStatus(csvField(row, "status")) ? workflowStatusColor(csvStatus(csvField(row, "status"))!) : "");
+    const parent = csvField(row, "parent_id");
+    const groupId = csvField(row, "group_id");
+    return [
+      {
+        id,
+        title: csvField(row, "title"),
+        description: csvField(row, "description"),
+        parentId: parent || null,
+        type: csvType(csvField(row, "type", "kind")),
+        color: color || undefined,
+        employee: csvField(row, "employee", "assignee"),
+        employeeEmail: csvField(row, "employee_email", "assignee_email"),
+        groupId: groupId || null,
+        size,
+        level: csvNumber(csvField(row, "level")),
+        x: csvNumber(csvField(row, "x")),
+        y: csvNumber(csvField(row, "y")),
+      },
+    ];
+  });
+  const groups = groupRows.flatMap((row) => {
+    const id = csvField(row, "id").trim();
+    if (!id) return [];
+    const parent = csvField(row, "parent_id");
+    return [
+      {
+        id,
+        title: csvField(row, "title"),
+        color: csvField(row, "color") || undefined,
+        parentId: parent || null,
+        sortOrder: csvNumber(csvField(row, "sort_order", "sortorder")),
+      },
+    ];
+  });
+  const links = linkRows.flatMap((row) => {
+    const source = csvField(row, "source_id", "source").trim();
+    const target = csvField(row, "target_id", "target").trim();
+    if (!source || !target) return [];
+    return [
+      {
+        id: csvField(row, "id") || undefined,
+        source,
+        target,
+        kind: csvField(row, "kind") || undefined,
+        arrows: csvField(row, "arrows") || undefined,
+      },
+    ];
+  });
+  const doc = parseGraphDocument({ nodes, links, groups });
+  if (!doc.nodes.length) throw new Error("No nodes in file");
+  return doc;
 }
 
 export function buildDocumentation(nodes: GraphNode[], links: GraphLink[], groups: GraphGroup[]): DocSection[] {

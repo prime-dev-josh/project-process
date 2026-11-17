@@ -1679,7 +1679,7 @@ export default function App() {
       <input
         ref={importRef}
         type="file"
-        accept="application/json"
+        accept=".json,.csv,application/json,text/csv"
         className="hidden"
         onChange={async (e) => {
           const file = e.target.files?.[0];

@@ -5,6 +5,7 @@ import {
   buildDocumentation,
   buildDocumentationBook,
   buildFullCsv,
+  parseGraphCsv,
   flowchartPagesForGroups,
   layoutFlowchart,
   layoutFlowchartPages,
@@ -40,7 +41,7 @@ describe("map export", () => {
     assert.match(csv, /# Nodes/);
     assert.match(csv, /# Groups/);
     assert.match(csv, /Alpha/);
-    assert.match(csv, /1,a,/);
+    assert.match(csv, /,type,kind,class,size,status,color,/);
     const docs = buildDocumentation(nodes, [], [group("g")]);
     assert.equal(docs[0]?.number, "1");
     assert.equal(docs.find((row) => row.id === "b")?.number, "1.1");
@@ -55,6 +56,70 @@ describe("map export", () => {
     assert.equal(book.parts[0]?.title, "g");
     assert.equal(book.parts[0]?.processes.length, 0);
     assert.deepEqual(book.parts[0]?.other.map((step) => step.id), ["a", "c"]);
+  });
+
+  it("round-trips a map through Full CSV", () => {
+    const nodes = [
+      node({
+        id: "start",
+        title: "Open, then review",
+        description: "Line one.\n\nLine two.",
+        size: 5.5,
+        groupId: "leaf",
+        color: "#00ad72",
+        employee: "Ada",
+        employeeEmail: "ada@primeeng.com",
+        x: 12.5,
+        y: -4,
+        type: "task",
+      }),
+      node({ id: "end", title: "Close", size: 6.5, groupId: "leaf", parentId: "start", level: 1, x: 40, y: 8 }),
+    ];
+    const groups: GraphGroup[] = [group("folder"), group("leaf", "folder")];
+    groups[1] = { ...groups[1]!, color: "#24328a", sortOrder: 2 };
+    const links: GraphLink[] = [
+      { id: "l1", source: "start", target: "end", kind: "parent", arrows: "one" },
+      { id: "l2", source: "end", target: "start", kind: "cross", arrows: "both" },
+    ];
+    const csv = buildFullCsv(nodes, links, groups);
+    const doc = parseGraphCsv(csv);
+    assert.equal(doc.nodes.length, 2);
+    const start = doc.nodes.find((item) => item.id === "start");
+    const end = doc.nodes.find((item) => item.id === "end");
+    assert.equal(start?.title, "Open, then review");
+    assert.equal(start?.description, "Line one.\n\nLine two.");
+    assert.equal(start?.size, 5.5);
+    assert.equal(start?.type, "task");
+    assert.equal(start?.color, "#00ad72");
+    assert.equal(start?.employeeEmail, "ada@primeeng.com");
+    assert.equal(start?.groupId, "leaf");
+    assert.equal(start?.x, 12.5);
+    assert.equal(end?.parentId, "start");
+    assert.equal(end?.size, 6.5);
+    assert.equal(doc.groups.find((item) => item.id === "leaf")?.parentId, "folder");
+    assert.equal(doc.groups.find((item) => item.id === "leaf")?.color, "#24328a");
+    assert.equal(doc.groups.find((item) => item.id === "leaf")?.sortOrder, 2);
+    assert.equal(doc.links.length, 2);
+    assert.equal(doc.links.find((item) => item.id === "l2")?.arrows, "both");
+  });
+
+  it("imports an older CSV that used class and status instead of size and color", () => {
+    const csv = [
+      "# Nodes",
+      "id,title,kind,class,status,assignee,assignee_email,group_id,parent_id,level,x,y",
+      "a,Open,Task,Start,Done,Ada,ada@primeeng.com,g,,0,1,2",
+      "# Groups",
+      "id,title,parent_id,color,sort_order",
+      "g,Intake,,#24328a,0",
+      "# Links",
+      "id,source_id,target_id,kind,arrows",
+    ].join("\r\n");
+    const doc = parseGraphCsv(csv);
+    assert.equal(doc.nodes[0]?.type, "task");
+    assert.equal(doc.nodes[0]?.size, 5.5);
+    assert.equal(doc.nodes[0]?.color, "#00ad72");
+    assert.equal(doc.nodes[0]?.employee, "Ada");
+    assert.equal(doc.groups[0]?.id, "g");
   });
 
   it("orders a start-to-end process and nests the shorter branch", () => {

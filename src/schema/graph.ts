@@ -171,3 +171,5 @@ export function parseGraphDocument(data: unknown): GraphDocument {
     settings: graphSettingsSchema.parse(raw.settings ?? {}),
   };
 }
+
+export const EMPTY_DOCUMENT: GraphDocument = parseGraphDocument({ nodes: [], links: [], groups: [] });

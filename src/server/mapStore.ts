@@ -1,4 +1,3 @@
-import { createSampleDocument } from "../sampleData";
 import { parseGraphDocument, type GraphDocument, type GraphGroup, type GraphLink, type GraphNode } from "../schema/graph";
 import { MAP_SCHEMA, sql, sqlPool } from "./azureSql";
 
@@ -456,10 +455,6 @@ async function sweepChangeLog(pool: SqlPool) {
 export async function loadSharedMap(): Promise<SharedMap> {
   const pool = await sqlPool();
   await ensureMapRow(pool, "seed");
-  const count = await pool.request().query(`SELECT COUNT(*) AS n FROM ${S}.Node WHERE is_deleted = 0`);
-  if (!Number(count.recordset[0]?.n)) {
-    await applyMapTx({ actor: "seed", label: "Seeded shared map", replace: createSampleDocument() });
-  }
   const [map, nodes, links, groups] = await Promise.all([
     pool.request().query(`SELECT revision FROM ${S}.Map WHERE id = 1`),
     pool.request().query(`SELECT * FROM ${S}.Node WHERE is_deleted = 0`),
