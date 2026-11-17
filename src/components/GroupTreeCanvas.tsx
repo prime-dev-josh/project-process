@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   childrenOf,
   descendantMemberCount,
@@ -647,6 +647,13 @@ export default function GroupTreeCanvas({
     onPlace(active.id, drop);
   }
 
+  const editingGroup = editingId ? byId.get(editingId) : undefined;
+  const editingBox = editingId ? boxById.get(editingId) : undefined;
+  const editingCard =
+    editingGroup && editingBox && !hiddenIds.has(editingGroup.id)
+      ? { group: editingGroup, layout: editCardLayout(editingBox) }
+      : null;
+
   const bounds = boxes.reduce(
     (acc, box) => ({
       minX: Math.min(acc.minX, box.x),
@@ -745,59 +752,64 @@ export default function GroupTreeCanvas({
               );
             })}
             {drag ? <Ghost group={byId.get(drag.id)} nodes={nodes} groups={groups} x={drag.x} y={drag.y} /> : null}
-            {editingId ? (() => {
-              const box = boxById.get(editingId);
-              const group = byId.get(editingId);
-              if (!box || !group || hiddenIds.has(group.id)) return null;
-              const layout = editCardLayout(box);
-              return (
-                <g
-                  key={`${group.id}-edit`}
-                  data-group-id={group.id}
-                  data-group-editing
-                  role="group"
-                  aria-label={`Editing ${groupTitle(group.title)}`}
-                  className="cursor-default"
-                  opacity={dimTree(group.id) ? 0.5 : 1}
-                >
-                  <rect
-                    x={layout.x - 6}
-                    y={layout.y - 6}
-                    width={layout.w + 12}
-                    height={layout.h + 12}
-                    rx={12}
-                    fill="var(--graph-bg)"
-                    opacity={0.92}
-                  />
-                  <rect
-                    x={layout.x}
-                    y={layout.y}
-                    width={layout.w}
-                    height={layout.h}
-                    rx={10}
-                    fill="var(--card)"
-                    stroke="var(--accent)"
-                    strokeWidth={2.5}
-                  />
-                  <GroupCardEditForm
-                    group={group}
-                    x={layout.x}
-                    y={layout.y}
-                    width={layout.w}
-                    height={layout.h}
-                    onRename={onRename}
-                    onColor={onColor}
-                    onAddChild={addChildVisible}
-                    onDelete={onDelete}
-                    onClose={() => setEditingId(null)}
-                  />
-                </g>
-              );
-            })() : null}
+            {editingCard ? (
+              <g
+                key={`${editingCard.group.id}-edit`}
+                data-group-id={editingCard.group.id}
+                data-group-editing
+                role="group"
+                aria-label={`Editing ${groupTitle(editingCard.group.title)}`}
+                className="cursor-default"
+                opacity={dimTree(editingCard.group.id) ? 0.5 : 1}
+              >
+                <rect
+                  x={editingCard.layout.x - 6}
+                  y={editingCard.layout.y - 6}
+                  width={editingCard.layout.w + 12}
+                  height={editingCard.layout.h + 12}
+                  rx={12}
+                  fill="var(--graph-bg)"
+                  opacity={0.92}
+                />
+                <rect
+                  x={editingCard.layout.x}
+                  y={editingCard.layout.y}
+                  width={editingCard.layout.w}
+                  height={editingCard.layout.h}
+                  rx={10}
+                  fill="var(--card)"
+                  stroke="var(--accent)"
+                  strokeWidth={2.5}
+                />
+              </g>
+            ) : null}
           </g>
         </svg>
       </div>
-      <div className="absolute top-3 right-3 z-10 flex gap-1.5">
+      {editingCard ? (
+        <div className="pointer-events-none absolute inset-0 z-20 overflow-hidden">
+          <div
+            data-group-edit
+            className="pointer-events-auto absolute left-0 top-0 box-border p-2"
+            style={{
+              width: editingCard.layout.w,
+              height: editingCard.layout.h,
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom}) translate(${editingCard.layout.x}px, ${editingCard.layout.y}px)`,
+              transformOrigin: "0 0",
+            }}
+          >
+            <GroupCardEditForm
+              group={editingCard.group}
+              onRename={onRename}
+              onColor={onColor}
+              onAddChild={addChildVisible}
+              onDelete={onDelete}
+              onClose={() => setEditingId(null)}
+            />
+          </div>
+        </div>
+      ) : null}
+      <div className="absolute top-3 right-3 z-30 flex gap-1.5">
         <button
           type="button"
           className={cx(toolBtn, "disabled:cursor-not-allowed disabled:opacity-60")}
@@ -1087,10 +1099,6 @@ function CollapseBadge({
 
 function GroupCardEditForm({
   group,
-  x,
-  y,
-  width,
-  height,
   onRename,
   onColor,
   onAddChild,
@@ -1098,10 +1106,6 @@ function GroupCardEditForm({
   onClose,
 }: {
   group: GraphGroup;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
   onRename: (groupId: string, title: string) => void;
   onColor: (groupId: string, color: string) => void;
   onAddChild: (parentId: string) => void;
@@ -1112,15 +1116,38 @@ function GroupCardEditForm({
   const [name, setName] = useState(committed);
   const nameRef = useRef(name);
   const inputRef = useRef<HTMLInputElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   nameRef.current = name;
 
   useEffect(() => {
     setName(committed);
   }, [committed, group.id]);
 
-  useEffect(() => {
-    const t = window.setTimeout(() => inputRef.current?.focus(), 0);
-    return () => window.clearTimeout(t);
+  useLayoutEffect(() => {
+    const wrap = wrapRef.current;
+    if (wrap) wrap.style.pointerEvents = "none";
+    const swallow = (event: Event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    document.addEventListener("click", swallow, true);
+    document.addEventListener("dblclick", swallow, true);
+    const focusTitle = () => {
+      document.removeEventListener("click", swallow, true);
+      document.removeEventListener("dblclick", swallow, true);
+      if (wrap) wrap.style.pointerEvents = "";
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus({ preventScroll: true });
+      input.select();
+    };
+    const timer = window.setTimeout(focusTitle, 0);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("click", swallow, true);
+      document.removeEventListener("dblclick", swallow, true);
+      if (wrap) wrap.style.pointerEvents = "";
+    };
   }, [group.id]);
 
   useEffect(() => {
@@ -1139,15 +1166,8 @@ function GroupCardEditForm({
   }
 
   return (
-    <foreignObject
-      x={x + 8}
-      y={y + 8}
-      width={width - 16}
-      height={height - 16}
-      data-group-edit
-      style={{ overflow: "visible" }}
-    >
       <div
+        ref={wrapRef}
         className="flex h-full min-h-0 flex-col gap-2 rounded-lg bg-[var(--card)] p-1 shadow-[var(--shadow)]"
         onPointerDown={(event) => event.stopPropagation()}
       >
@@ -1156,6 +1176,7 @@ function GroupCardEditForm({
           id={`group-card-name-${group.id}`}
           className={cx(field, "w-full py-1.5 text-[13px] font-semibold")}
           value={name}
+          autoFocus
           aria-label="Group name"
           onChange={(event) => setName(event.target.value)}
           onBlur={commitName}
@@ -1202,7 +1223,6 @@ function GroupCardEditForm({
           </button>
         </div>
       </div>
-    </foreignObject>
   );
 }
 
