@@ -23,7 +23,7 @@ function link(kind: GraphLink["kind"] = "parent"): GraphLink {
 }
 
 function group(id: string, parentId: string | null = null): GraphGroup {
-  return { id, title: id, parentId, sortOrder: 0 };
+  return { id, title: id, parentId, sortOrder: 0, kind: "group", templateTeamId: null, assignees: [], notes: "" };
 }
 
 describe("insert between nodes", () => {

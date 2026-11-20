@@ -19,7 +19,7 @@ import {
 } from "./groupTree";
 
 function group(id: string, parentId: string | null = null, sortOrder = 0): GraphGroup {
-  return { id, title: id, parentId, sortOrder };
+  return { id, title: id, parentId, sortOrder, kind: "group", templateTeamId: null, assignees: [], notes: "" };
 }
 
 function node(id: string, groupId: string | null): GraphNode {
@@ -46,17 +46,17 @@ describe("group tree", () => {
     assert.deepEqual(childrenOf(groups, "A").map((item) => item.id), ["A1"]);
   });
 
-  it("moves a leaf's nodes onto a new child", () => {
-    const groups = [group("Leaf")];
+  it("keeps a locked group's nodes when adding a team child", () => {
+    const groups = [{ ...group("Leaf"), locked: true }];
     const nodes = [node("n1", "Leaf"), node("n2", "Leaf"), node("other", null)];
     const next = addChildGroup(groups, nodes, "Leaf", { id: "Child", title: "Child" });
     assert.equal(isLeaf(next.groups, "Leaf"), false);
-    assert.equal(isLeaf(next.groups, "Child"), true);
+    assert.equal(next.groups.find((item) => item.id === "Child")?.kind, "team");
     assert.deepEqual(
       next.nodes.map((item) => [item.id, item.groupId]),
       [
-        ["n1", "Child"],
-        ["n2", "Child"],
+        ["n1", "Leaf"],
+        ["n2", "Leaf"],
         ["other", null],
       ],
     );
@@ -68,19 +68,24 @@ describe("group tree", () => {
     assert.equal(reparentGroup(groups, [], "A", "B"), null);
   });
 
-  it("moves a target leaf's nodes onto the incoming leaf", () => {
-    const groups = [group("Parent"), group("Incoming")];
+  it("keeps a locked parent's nodes when another group is nested under it", () => {
+    const groups = [{ ...group("Parent"), locked: true }, group("Incoming")];
     const nodes = [node("n1", "Parent")];
     const next = reparentGroup(groups, nodes, "Incoming", "Parent");
     assert.ok(next);
-    assert.equal(next.nodes[0]?.groupId, "Incoming");
+    assert.equal(next.nodes[0]?.groupId, "Parent");
     assert.equal(isLeaf(next.groups, "Parent"), false);
   });
 
-  it("rejects assigning a folder id", () => {
-    const groups = [group("Folder"), group("Leaf", "Folder")];
+  it("rejects assigning an unlocked folder or a team", () => {
+    const groups = [
+      { ...group("Folder"), locked: false },
+      { ...group("Leaf", "Folder"), locked: true },
+      { ...group("Team", "Leaf"), kind: "team" as const, locked: false },
+    ];
     assert.equal(canAssignGroup(groups, "Folder"), false);
     assert.equal(canAssignGroup(groups, "Leaf"), true);
+    assert.equal(canAssignGroup(groups, "Team"), false);
     assert.equal(canAssignGroup(groups, null), true);
     assert.equal(canAssignGroup(groups, "missing"), false);
   });

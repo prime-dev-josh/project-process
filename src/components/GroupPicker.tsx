@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { groupPath, leafGroups } from "../graph/groupTree";
+import { groupPath, mapGroups } from "../graph/groupTree";
 import { groupPaintColor, groupTitle } from "../graph/groups";
 import { placePortaledMenu, portaledMenuListClass, portaledMenuShellClass, type PortaledMenuPos } from "../lib/dropdownPortal";
 import { handleOverlayWheel } from "../lib/overlayScroll";
@@ -101,7 +101,7 @@ export default function GroupPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [menuPos, setMenuPos] = useState<PortaledMenuPos | null>(null);
-  const leaves = useMemo(() => leafGroups(groups), [groups]);
+  const leaves = useMemo(() => mapGroups(groups), [groups]);
 
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();

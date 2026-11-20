@@ -67,8 +67,8 @@ export default function GroupTreeInspector({
       <section className="shrink-0 border-t border-[var(--line)] p-3">
         <h2 className={sideH2}>Groups</h2>
         <p className="mb-3 text-[11px] leading-snug text-[var(--muted)]">
-          Folders organize the tree. Only groups without children can hold nodes on the map. Double-click a box or use
-          the pencil to edit it.
+          Folders organize the tree. Lock a group to use it on the map. A newly locked group starts with its own copy
+          of Long Lead's teams and can hold nodes. Edits to a team stay on that group. Double-click a box or use the pencil to edit it.
         </p>
         <button type="button" className={cx(primaryBtn, "w-full")} onClick={onAddRoot}>
           Add root group

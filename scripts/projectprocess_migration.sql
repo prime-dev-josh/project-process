@@ -116,3 +116,20 @@ IF COL_LENGTH(N'projectprocess.Group', N'sort_order') IS NULL
     ALTER TABLE projectprocess.[Group] ADD sort_order int NOT NULL
         CONSTRAINT DF_projectprocess_Group_sort DEFAULT (0);
 GO
+IF COL_LENGTH(N'projectprocess.Group', N'locked') IS NULL
+    ALTER TABLE projectprocess.[Group] ADD locked bit NOT NULL
+        CONSTRAINT DF_projectprocess_Group_locked DEFAULT (0);
+GO
+IF COL_LENGTH(N'projectprocess.Group', N'kind') IS NULL
+    ALTER TABLE projectprocess.[Group] ADD kind nvarchar(20) NOT NULL
+        CONSTRAINT DF_projectprocess_Group_kind DEFAULT (N'group');
+GO
+IF COL_LENGTH(N'projectprocess.Group', N'template_team_id') IS NULL
+    ALTER TABLE projectprocess.[Group] ADD template_team_id nvarchar(160) NULL;
+GO
+IF COL_LENGTH(N'projectprocess.Group', N'assignees_json') IS NULL
+    ALTER TABLE projectprocess.[Group] ADD assignees_json nvarchar(max) NULL;
+GO
+IF COL_LENGTH(N'projectprocess.Group', N'notes') IS NULL
+    ALTER TABLE projectprocess.[Group] ADD notes nvarchar(max) NULL;
+GO

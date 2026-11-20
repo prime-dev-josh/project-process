@@ -83,6 +83,11 @@ export function documentGroup(group: GraphGroup): GraphGroup {
     color: group.color,
     parentId: group.parentId ?? null,
     sortOrder: group.sortOrder ?? 0,
+    locked: group.locked,
+    kind: group.kind === "team" ? "team" : "group",
+    templateTeamId: group.templateTeamId ?? null,
+    assignees: group.assignees ?? [],
+    notes: group.notes ?? "",
   };
 }
 
@@ -91,7 +96,12 @@ export function sameGroup(a: GraphGroup, b: GraphGroup) {
     a.title === b.title &&
     (a.color ?? "") === (b.color ?? "") &&
     (a.parentId ?? null) === (b.parentId ?? null) &&
-    (a.sortOrder ?? 0) === (b.sortOrder ?? 0)
+    (a.sortOrder ?? 0) === (b.sortOrder ?? 0) &&
+    Boolean(a.locked) === Boolean(b.locked) &&
+    (a.kind ?? "group") === (b.kind ?? "group") &&
+    (a.templateTeamId ?? null) === (b.templateTeamId ?? null) &&
+    JSON.stringify(a.assignees ?? []) === JSON.stringify(b.assignees ?? []) &&
+    (a.notes ?? "") === (b.notes ?? "")
   );
 }
 

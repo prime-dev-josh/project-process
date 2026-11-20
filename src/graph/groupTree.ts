@@ -27,6 +27,44 @@ export function isLeaf(groups: GraphGroup[], id: string) {
   return !groups.some((group) => parentKey(group.parentId, group.id) === id);
 }
 
+export function isTeam(group: GraphGroup | undefined) {
+  return group?.kind === "team";
+}
+
+function groupDefaults(group: Omit<GraphGroup, "kind" | "templateTeamId" | "assignees" | "notes"> & Partial<GraphGroup>): GraphGroup {
+  return {
+    ...group,
+    kind: group.kind === "team" ? "team" : "group",
+    templateTeamId: group.templateTeamId ?? null,
+    assignees: group.assignees ?? [],
+    notes: group.notes ?? "",
+  };
+}
+
+/** Locked groups hold map nodes, even when they have team children. */
+export function isMapGroup(groups: GraphGroup[], id: string) {
+  const group = groups.find((item) => item.id === id);
+  if (!group || isTeam(group)) return false;
+  if (group.locked != null) return group.locked;
+  if (isLeaf(groups, id)) return true;
+  const title = groupTitle(group.title).toLowerCase();
+  if (title === "long lead") return true;
+  const source = groups.find((item) => groupTitle(item.title).toLowerCase() === "long lead");
+  if (!source) return false;
+  const roster = new Set(
+    groups
+      .filter((item) => parentKey(item.parentId, item.id) === source.id)
+      .map((item) => groupTitle(item.title).toLowerCase()),
+  );
+  if (!roster.size) return false;
+  const kids = groups.filter((item) => parentKey(item.parentId, item.id) === id);
+  return kids.length > 0 && kids.every((kid) => roster.has(groupTitle(kid.title).toLowerCase()));
+}
+
+export function groupAssignees(group: GraphGroup | undefined) {
+  return group?.assignees ?? [];
+}
+
 export function rootGroups(groups: GraphGroup[]): GraphGroup[] {
   const known = new Set(groups.map((group) => group.id));
   return groups
@@ -53,6 +91,24 @@ export function leafGroups(groups: GraphGroup[]): GraphGroup[] {
 
   rootGroups(groups).forEach((root) => visit(root.id));
   return leaves;
+}
+
+/** Map-assignable groups (locked), walking the forest so pickers stay stable. */
+export function mapGroups(groups: GraphGroup[]): GraphGroup[] {
+  const out: GraphGroup[] = [];
+  const seen = new Set<string>();
+
+  function visit(id: string) {
+    if (seen.has(id)) return;
+    const group = groups.find((item) => item.id === id);
+    if (!group) return;
+    seen.add(id);
+    if (isMapGroup(groups, id)) out.push(group);
+    childrenOf(groups, id).forEach((kid) => visit(kid.id));
+  }
+
+  rootGroups(groups).forEach((root) => visit(root.id));
+  return out;
 }
 
 export function groupPath(groups: GraphGroup[], id: string): string[] {
@@ -133,7 +189,7 @@ export function descendantMemberCount(groups: GraphGroup[], nodes: GraphNode[], 
 
 export function canAssignGroup(groups: GraphGroup[], groupId: string | null) {
   if (groupId == null) return true;
-  return groups.some((group) => group.id === groupId) && isLeaf(groups, groupId);
+  return isMapGroup(groups, groupId);
 }
 
 /** The one leaf group a filter is showing, or null when the filter is not a single assignable group. */
@@ -162,14 +218,22 @@ export function addChildGroup(
   draft: { id: string; title: string; color?: string },
 ): GroupTreeResult {
   if (parentId && !groups.some((group) => group.id === parentId)) return { groups, nodes };
-  const child: GraphGroup = {
+  const parent = parentId ? groups.find((group) => group.id === parentId) : undefined;
+  if (isTeam(parent)) return { groups, nodes };
+  const asTeam = Boolean(parent && isMapGroup(groups, parent.id));
+  const child = groupDefaults({
     id: draft.id,
     title: draft.title,
     color: draft.color,
     parentId,
     sortOrder: nextSortOrder(groups, parentId),
-  };
-  const nextNodes = parentId && isLeaf(groups, parentId) ? moveMembers(nodes, parentId, child.id) : nodes;
+    locked: asTeam ? false : true,
+    kind: asTeam ? "team" : "group",
+  });
+  const nextNodes =
+    parentId && !asTeam && isLeaf(groups, parentId) && !isMapGroup(groups, parentId)
+      ? moveMembers(nodes, parentId, child.id)
+      : nodes;
   return { groups: [...groups, child], nodes: nextNodes };
 }
 
@@ -186,7 +250,7 @@ export function reparentGroup(
   if (wouldCycle(groups, id, newParentId)) return null;
 
   let nextNodes = nodes;
-  if (newParentId && isLeaf(groups, newParentId)) {
+  if (newParentId && isLeaf(groups, newParentId) && !isMapGroup(groups, newParentId)) {
     const dest = firstLeafId(groups, id);
     if (!dest) return null;
     nextNodes = moveMembers(nodes, newParentId, dest);

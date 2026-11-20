@@ -2,6 +2,7 @@ import type { WorkflowStatus } from "../graph/workflowStatus";
 import { handleOverlayWheel } from "../lib/overlayScroll";
 import type { ColorBy, GraphGroup, GraphNode, GraphSettings } from "../types";
 import FilterPanel from "./FilterPanel";
+import type { GroupEditPatch } from "./GroupManager";
 
 type Props = {
   search: string;
@@ -22,7 +23,7 @@ type Props = {
   onFit: () => void;
   onReorg: () => void;
   onTogglePhysics: () => void;
-  onUpdateGroup: (groupId: string, patch: { title?: string; color?: string }) => void;
+  onUpdateGroup: (groupId: string, patch: GroupEditPatch) => void;
 };
 
 export default function LeftSidePanel({

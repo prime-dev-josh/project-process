@@ -1,4 +1,4 @@
-import { parseGraphDocument, type GraphDocument, type GraphGroup, type GraphLink, type GraphNode } from "../schema/graph";
+import { parseGraphDocument, parseGroupAssignees, type GraphDocument, type GraphGroup, type GraphLink, type GraphNode } from "../schema/graph";
 import { MAP_SCHEMA, sql, sqlPool } from "./azureSql";
 
 type SqlRequest = any;
@@ -119,6 +119,11 @@ function groupJson(group: GraphGroup) {
     color: group.color ? group.color.slice(0, 32) : null,
     parentId: group.parentId ? String(group.parentId).slice(0, 160) : null,
     sortOrder: Number.isFinite(group.sortOrder) ? Math.trunc(group.sortOrder) : 0,
+    locked: group.locked === true,
+    kind: group.kind === "team" ? "team" : "group",
+    templateTeamId: group.templateTeamId ? String(group.templateTeamId).slice(0, 160) : null,
+    assigneesJson: JSON.stringify(group.assignees ?? []),
+    notes: (group.notes ?? "").slice(0, 8000),
   };
 }
 
@@ -157,12 +162,20 @@ function rowGroup(row: Row): GraphGroup {
   const parent = parentRaw == null || parentRaw === "" ? null : String(parentRaw).trim();
   const sortRaw = row.sort_order ?? row.sortOrder ?? 0;
   const sortOrder = Number(sortRaw);
+  const lockedRaw = row.locked;
+  const kindRaw = String(row.kind ?? "").trim().toLowerCase();
+  const templateRaw = row.template_team_id ?? row.templateTeamId;
   return {
     id,
     title: String(row.title ?? "Untitled group"),
     color: row.color == null || row.color === "" ? undefined : String(row.color),
     parentId: !parent || parent === "null" || parent === id ? null : parent,
     sortOrder: Number.isFinite(sortOrder) ? sortOrder : 0,
+    locked: lockedRaw == null ? undefined : Boolean(lockedRaw === true || lockedRaw === 1 || lockedRaw === "1" || lockedRaw === "true"),
+    kind: kindRaw === "team" ? "team" : "group",
+    templateTeamId: templateRaw == null || templateRaw === "" ? null : String(templateRaw),
+    assignees: parseGroupAssignees(row.assignees_json ?? row.assigneesJson ?? row.assignees),
+    notes: row.notes == null ? "" : String(row.notes).slice(0, 8000),
   };
 }
 
@@ -367,6 +380,43 @@ async function upsertGroups(tx: SqlTransaction, groups: GraphGroup[], stamp: Sta
           title nvarchar(400) '$.title',
           color nvarchar(32) '$.color',
           parent_id nvarchar(160) '$.parentId',
+          sort_order int '$.sortOrder',
+          locked bit '$.locked',
+          kind nvarchar(20) '$.kind',
+          template_team_id nvarchar(160) '$.templateTeamId',
+          assignees_json nvarchar(max) '$.assigneesJson',
+          notes nvarchar(max) '$.notes'
+        )
+      ) AS s ON t.id = s.id
+      WHEN MATCHED THEN UPDATE SET
+        title = s.title, color = s.color, parent_id = s.parent_id, sort_order = s.sort_order,
+        locked = s.locked, kind = s.kind, template_team_id = s.template_team_id, assignees_json = s.assignees_json,
+        notes = s.notes,
+        version = t.version + 1, is_deleted = 0,
+        updated_rev = @rev, updated_client = @client, updated_at = @updated_at, updated_by = @updated_by
+      WHEN NOT MATCHED THEN INSERT (
+        id, title, color, parent_id, sort_order, locked, kind, template_team_id, assignees_json, notes,
+        version, is_deleted, updated_rev, updated_client, updated_at, updated_by
+      ) VALUES (
+        s.id, s.title, s.color, s.parent_id, s.sort_order, s.locked, s.kind, s.template_team_id, s.assignees_json, s.notes,
+        1, 0, @rev, @client, @updated_at, @updated_by
+      )
+      OUTPUT INSERTED.id, INSERTED.version;
+    `);
+    return versionsFrom(result.recordset);
+  } catch (err) {
+    if (!isMissingGroupColumn(err)) throw err;
+    try {
+      const tree = stampInputs(tx.request(), stamp);
+      tree.input("rows", sql.NVarChar(sql.MAX), JSON.stringify(groups.map(groupJson)));
+      const treeResult = await tree.query(`
+      MERGE ${GROUP} WITH (HOLDLOCK) AS t
+      USING (
+        SELECT * FROM OPENJSON(@rows) WITH (
+          id nvarchar(160) '$.id',
+          title nvarchar(400) '$.title',
+          color nvarchar(32) '$.color',
+          parent_id nvarchar(160) '$.parentId',
           sort_order int '$.sortOrder'
         )
       ) AS s ON t.id = s.id
@@ -381,9 +431,10 @@ async function upsertGroups(tx: SqlTransaction, groups: GraphGroup[], stamp: Sta
       )
       OUTPUT INSERTED.id, INSERTED.version;
     `);
-    return versionsFrom(result.recordset);
-  } catch (err) {
-    if (!isMissingGroupColumn(err)) throw err;
+      return versionsFrom(treeResult.recordset);
+    } catch (treeErr) {
+      if (!isMissingGroupColumn(treeErr)) throw treeErr;
+    }
     const legacy = stampInputs(tx.request(), stamp);
     legacy.input("rows", sql.NVarChar(sql.MAX), JSON.stringify(groups.map(groupJson)));
     const result = await legacy.query(`
@@ -466,6 +517,7 @@ export async function loadSharedMap(): Promise<SharedMap> {
   const mappedLinks: GraphLink[] = links.recordset.map(rowLink);
   let parsedNodes: GraphNode[] = mappedNodes;
   let parsedLinks: GraphLink[] = mappedLinks;
+  let parsedGroups: GraphGroup[] = mappedGroups;
   try {
     const doc = parseGraphDocument({
       nodes: mappedNodes,
@@ -474,6 +526,7 @@ export async function loadSharedMap(): Promise<SharedMap> {
     });
     parsedNodes = doc.nodes;
     parsedLinks = doc.links;
+    parsedGroups = doc.groups;
   } catch (err) {
     console.error("[mapStore] parseGraphDocument failed; returning mapped rows", err);
   }
@@ -484,7 +537,7 @@ export async function loadSharedMap(): Promise<SharedMap> {
     revision: Number(map.recordset[0]?.revision ?? 0),
     nodes: parsedNodes.map((n) => ({ ...n, version: nodeVersions[n.id] ?? 1 })),
     links: parsedLinks.map((l) => ({ ...l, version: linkVersions[l.id] ?? 1 })),
-    groups: mappedGroups.map((g) => ({ ...g, version: groupVersions[g.id] ?? 1 })),
+    groups: parsedGroups.map((g) => ({ ...g, version: groupVersions[g.id] ?? 1 })),
   };
 }
 

@@ -52,7 +52,7 @@ function PersonSummary({
         <span className="min-w-0">
           <span className="block truncate text-[13px] font-semibold text-[var(--muted)]">{emptyLabel}</span>
           <span className="block truncate text-[11px] text-[var(--muted)]">
-            {emptyLabel === "Unassigned" ? "No one assigned" : "Assignees differ"}
+            {emptyLabel === "Unassigned" ? "No one assigned" : emptyLabel === "Add person" ? "Choose someone" : "Assignees differ"}
           </span>
         </span>
       </span>

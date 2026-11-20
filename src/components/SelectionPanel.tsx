@@ -9,6 +9,7 @@ import { cx, dangerText, ghostBtn, swatch, swatchOn } from "../styles";
 import type { ColorBy, GraphGroup, GraphNode } from "../types";
 import EmployeePicker from "./EmployeePicker";
 import GroupPicker from "./GroupPicker";
+import type { GroupEditPatch } from "./GroupManager";
 
 type Props = {
   nodes: GraphNode[];
@@ -20,7 +21,7 @@ type Props = {
   onAssign: (next: { name: string; email: string }) => void;
   onDelete: () => void;
   onAssignGroup: (groupId: string | null) => void;
-  onUpdateGroup: (groupId: string, patch: { title?: string; color?: string }) => void;
+  onUpdateGroup: (groupId: string, patch: GroupEditPatch) => void;
 };
 
 export default function SelectionPanel({

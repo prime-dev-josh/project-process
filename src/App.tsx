@@ -33,11 +33,13 @@ import {
   groupDeleteImpact,
   inheritGroupFromFilter,
   type GroupDeleteImpact,
-  isLeaf,
-  leafGroups,
+  isMapGroup,
+  mapGroups,
   reorderSiblings,
   reparentGroup,
 } from "./graph/groupTree";
+import { ensureMapGroupTeams, groupsNeedTeamSync, setGroupLocked } from "./graph/groupTeams";
+import type { GroupEditPatch } from "./components/GroupManager";
 import { UNGROUPED_FILTER, groupTitle, nextGroupColor, normalizeGroupColor } from "./graph/groups";
 import { addChild, addLink, blankNode, deleteNode, insertNodeBetween } from "./graph/ops";
 import { GRAPH_MAX_ZOOM, GRAPH_MIN_ZOOM, mergeViewSettings } from "./graph/viewSettings";
@@ -51,7 +53,7 @@ import { useMapSync } from "./hooks/useMapSync";
 import { useResizablePanel } from "./hooks/useResizablePanel";
 import { fetchMap } from "./lib/mapSync";
 import { selectionPanelPlacement } from "./lib/floatPanelPlacement";
-import { DEFAULT_SETTINGS } from "./schema/graph";
+import { DEFAULT_SETTINGS, parseGroupNotes } from "./schema/graph";
 import {
   downloadJson,
   loadViewRotation,
@@ -285,10 +287,17 @@ export default function App() {
       if (cur.kind === "link" && !linkIds.has(cur.id)) return null;
       return cur;
     });
-    const leafIds = new Set(leafGroups(groups).map((group) => group.id));
-    setGroupFilters((prev) => prev.filter((id) => id === UNGROUPED_FILTER || leafIds.has(id)));
+    const assignableIds = new Set(mapGroups(groups).map((group) => group.id));
+    setGroupFilters((prev) => prev.filter((id) => id === UNGROUPED_FILTER || assignableIds.has(id)));
     setSelectedGroupId((current) => (current && groups.some((group) => group.id === current) ? current : null));
   }, [nodeById, links, groups]);
+
+  useEffect(() => {
+    if (!hydration || !groups.length) return;
+    const next = groupsNeedTeamSync(groups);
+    if (!next) return;
+    commitGraph("Attached teams to map groups", { groups: next });
+  }, [hydration, groups]);
 
   const dismissEditPanel = useCallback(() => {
     setEditLocked(false);
@@ -479,7 +488,7 @@ export default function App() {
 
   function updateNode(id: string, patch: Partial<GraphNode>) {
     if (patch.groupId != null && !canAssignGroup(graphStore.state.groups, patch.groupId)) {
-      showToast("Only groups without children can hold nodes");
+      showToast("Only locked groups can hold nodes");
       return;
     }
     const current = graphStore.state.nodes.find((n) => n.id === id);
@@ -504,7 +513,7 @@ export default function App() {
 
   function updateSelectedNodes(patch: Partial<GraphNode>, label: string) {
     if (patch.groupId != null && !canAssignGroup(graphStore.state.groups, patch.groupId)) {
-      showToast("Only groups without children can hold nodes");
+      showToast("Only locked groups can hold nodes");
       return;
     }
     const ids = new Set(selectedIds);
@@ -617,20 +626,23 @@ export default function App() {
     if (parentId && !currentGroups.some((group) => group.id === parentId)) return;
     const id = newId();
     const parent = parentId ? currentGroups.find((group) => group.id === parentId) : null;
-    const movedMembers = Boolean(
-      parentId && isLeaf(currentGroups, parentId) && currentNodes.some((node) => node.groupId === parentId),
-    );
     const next = addChildGroup(currentGroups, currentNodes, parentId, {
       id,
-      title: "New group",
+      title: parent && isMapGroup(currentGroups, parent.id) ? "New team" : "New group",
       color: nextGroupColor(currentGroups),
     });
+    const createdEarly = next.groups.find((group) => group.id === id);
+    const groups =
+      createdEarly && isMapGroup(next.groups, createdEarly.id)
+        ? ensureMapGroupTeams(next.groups, newId, createdEarly.id)
+        : next.groups;
+    const created = groups.find((group) => group.id === id);
     const label = !parent
       ? "Added group"
-      : movedMembers
-        ? `Moved nodes into a child of ${groupTitle(parent.title)}`
+      : created?.kind === "team"
+        ? `Added team under ${groupTitle(parent.title)}`
         : `Added group under ${groupTitle(parent.title)}`;
-    commitGraph(label, next);
+    commitGraph(label, { ...next, groups });
     setSelectedGroupId(id);
     setCanvasView("groups");
   }
@@ -698,7 +710,8 @@ export default function App() {
     if (!impact) return;
     const currentGroups = graphStore.state.groups;
     const currentNodes = graphStore.state.nodes;
-    commitGraph(`Deleted ${impact.title}`, deleteGroup(currentGroups, currentNodes, impact.id));
+    const removed = deleteGroup(currentGroups, currentNodes, impact.id);
+    commitGraph(`Deleted ${impact.title}`, removed);
     setSelectedGroupId((current) => (current && impact.ids.includes(current) ? null : current));
     setGroupDelete(null);
   }
@@ -726,16 +739,40 @@ export default function App() {
     }
   }
 
-  function updateGroup(groupId: string, patch: { title?: string; color?: string }) {
-    const current = graphStore.state.groups.find((group) => group.id === groupId);
+  function updateGroup(groupId: string, patch: GroupEditPatch) {
+    const currentGroups = graphStore.state.groups;
+    const currentNodes = graphStore.state.nodes;
+    const current = currentGroups.find((group) => group.id === groupId);
     if (!current) return;
+    if (patch.locked !== undefined) {
+      const result = setGroupLocked(currentGroups, currentNodes, groupId, patch.locked, newId);
+      if (result.error) {
+        showToast(result.error);
+        return;
+      }
+      commitGraph(patch.locked ? `Locked ${groupTitle(current.title)}` : `Unlocked ${groupTitle(current.title)}`, result);
+      return;
+    }
     const title = patch.title !== undefined ? groupTitle(patch.title) : current.title;
     const color = patch.color !== undefined ? normalizeGroupColor(patch.color) ?? current.color : current.color;
-    if (title === current.title && (color ?? "") === (current.color ?? "")) return;
-    const label = patch.color !== undefined && (color ?? "") !== (current.color ?? "") ? "Changed group color" : "Renamed group";
-    commitGraph(label, {
-      groups: graphStore.state.groups.map((group) => (group.id === groupId ? { ...group, title, color } : group)),
-    });
+    const assignees = patch.assignees ?? current.assignees ?? [];
+    const notes = patch.notes !== undefined ? parseGroupNotes(patch.notes) : (current.notes ?? "");
+    const sameTitle = title === current.title;
+    const sameColor = (color ?? "") === (current.color ?? "");
+    const samePeople = JSON.stringify(assignees) === JSON.stringify(current.assignees ?? []);
+    const sameNotes = notes === (current.notes ?? "");
+    if (sameTitle && sameColor && sameNotes && (patch.assignees === undefined || samePeople)) return;
+    const nextGroups = currentGroups.map((group) =>
+      group.id === groupId ? { ...group, title, color, assignees, notes } : group,
+    );
+    const label = !samePeople
+      ? `Updated people on ${groupTitle(current.title)}`
+      : !sameNotes
+        ? `Updated notes on ${groupTitle(current.title)}`
+        : !sameColor
+          ? "Changed group color"
+          : "Renamed group";
+    commitGraph(label, { groups: nextGroups });
   }
 
   function ungroup(ids: string[]) {
@@ -1179,8 +1216,7 @@ export default function App() {
             onPlace={applyGroupTreeDrop}
             onInvalid={() => showToast("That move would put a group inside itself")}
             onAddRoot={() => addGroup(null)}
-            onRename={(id, title) => updateGroup(id, { title })}
-            onColor={(id, color) => updateGroup(id, { color })}
+            onUpdateGroup={updateGroup}
             onAddChild={(parentId) => addGroup(parentId)}
             onDelete={deleteGroupFromTree}
             onRefresh={refreshGroupsTree}

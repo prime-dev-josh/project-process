@@ -27,7 +27,7 @@ function node(partial: Partial<GraphNode> & { id: string; title: string }): Grap
 }
 
 function group(id: string, parentId: string | null = null): GraphGroup {
-  return { id, title: id, parentId, sortOrder: 0 };
+  return { id, title: id, parentId, sortOrder: 0, kind: "group", templateTeamId: null, assignees: [], notes: "" };
 }
 
 describe("map export", () => {

@@ -1,5 +1,5 @@
 import { UNGROUPED_FILTER, groupTitle } from "./groups";
-import { groupPath, isLeaf, subtreeIds } from "./groupTree";
+import { canAssignGroup, groupPath, subtreeIds } from "./groupTree";
 import { nodeWorkflowStatus, type WorkflowStatus } from "./workflowStatus";
 import type { ColorBy, GraphGroup, GraphLink, GraphNode } from "../types";
 
@@ -113,7 +113,7 @@ export function visibleGroupIdsForTree(
 
   for (const group of groups) {
     const titleHit = titleHits(group);
-    if (isLeaf(groups, group.id)) {
+    if (canAssignGroup(groups, group.id)) {
       const members = nodes.filter((node) => node.groupId === group.id);
       const nodeHit = members.some((node) => isFiltered(node, query, colorBy, options));
       if (nodeHit || titleHit) addAncestors(group.id);

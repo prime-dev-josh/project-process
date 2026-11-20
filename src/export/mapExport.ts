@@ -1,5 +1,6 @@
 import { childrenOf as nodeChildren, linkEnds } from "../graph/visibility";
-import { childrenOf as groupChildren, groupPath, isLeaf, leafGroups, rootGroups } from "../graph/groupTree";
+import { childrenOf as groupChildren, groupPath, isMapGroup, isTeam, mapGroups, rootGroups } from "../graph/groupTree";
+import { parseGroupAssignees } from "../schema/graph";
 import { groupPaintColor, groupTitle, UNGROUPED_FILTER } from "../graph/groups";
 import { NODE_CLASS_META, nodeClassFromSize, nodeClassLabel, sizeFromNodeClass, type NodeClass } from "../graph/nodeClass";
 import { KIND_LABEL } from "../graph/ops";
@@ -7,6 +8,19 @@ import { nodeWorkflowStatus, WORKFLOW_STATUS_META, workflowStatusColor, type Wor
 import { parseGraphDocument, type GraphDocument, type NodeKind } from "../schema/graph";
 import type { GraphGroup, GraphLink, GraphNode } from "../types";
 import { csvSections, csvTable } from "./csv";
+
+function csvGroupKind(groups: GraphGroup[], group: GraphGroup) {
+  if (isTeam(group)) return "team";
+  if (isMapGroup(groups, group.id)) return "group";
+  return "folder";
+}
+
+function csvAssignees(assignees: GraphGroup["assignees"]) {
+  return (assignees ?? [])
+    .map((person) => (person.email ? `${person.name} <${person.email}>` : person.name))
+    .filter(Boolean)
+    .join("; ");
+}
 
 export type FlowchartBox = {
   id: string;
@@ -197,9 +211,13 @@ export function buildFullCsv(nodes: GraphNode[], links: GraphLink[], groups: Gra
         group.parentId ?? "",
         group.parentId ? groupTitle(groupById.get(group.parentId)?.title) : "",
         groupPath(groups, group.id).join(" / "),
-        isLeaf(groups, group.id) ? "group" : "folder",
+        csvGroupKind(groups, group),
         groupPaintColor(group),
         group.sortOrder ?? 0,
+        group.locked === true,
+        group.templateTeamId ?? "",
+        csvAssignees(group.assignees),
+        group.notes ?? "",
       ]);
       walkGroups(group.id, next);
     });
@@ -214,9 +232,13 @@ export function buildFullCsv(nodes: GraphNode[], links: GraphLink[], groups: Gra
       group.parentId ?? "",
       group.parentId ? groupTitle(groupById.get(group.parentId)?.title) : "",
       groupPath(groups, group.id).join(" / "),
-      isLeaf(groups, group.id) ? "group" : "folder",
+      csvGroupKind(groups, group),
       groupPaintColor(group),
       group.sortOrder ?? 0,
+      group.locked === true,
+      group.templateTeamId ?? "",
+      csvAssignees(group.assignees),
+      group.notes ?? "",
     ]);
   }
 
@@ -258,7 +280,7 @@ export function buildFullCsv(nodes: GraphNode[], links: GraphLink[], groups: Gra
     nodeRows,
   );
   const groupsCsv = csvTable(
-    ["id", "title", "outline", "parent_id", "parent_title", "path", "kind", "color", "sort_order"],
+    ["id", "title", "outline", "parent_id", "parent_title", "path", "kind", "color", "sort_order", "locked", "template_team_id", "assignees", "notes"],
     groupRows,
   );
   const linksCsv = csvTable(
@@ -349,6 +371,11 @@ export function parseGraphCsv(text: string): GraphDocument {
         color: csvField(row, "color") || undefined,
         parentId: parent || null,
         sortOrder: csvNumber(csvField(row, "sort_order", "sortorder")),
+        locked: csvField(row, "locked") || undefined,
+        kind: csvField(row, "kind") === "team" ? "team" : "group",
+        templateTeamId: csvField(row, "template_team_id") || null,
+        assignees: parseGroupAssignees(csvField(row, "assignees")),
+        notes: csvField(row, "notes"),
       },
     ];
   });
@@ -632,7 +659,7 @@ export function buildDocumentationBook(
   links: GraphLink[],
   groups: GraphGroup[],
 ): { parts: DocBookPart[] } {
-  const leaves = leafGroups(groups);
+  const leaves = mapGroups(groups);
   const leafIds = new Set(leaves.map((group) => group.id));
   const parts: DocBookPart[] = [];
   let partNo = 1;
@@ -754,7 +781,7 @@ export function flowchartPagesForGroups(
     return { groupId, title, path, color, nodes: members, links: pageLinks };
   }
 
-  for (const group of leafGroups(groups)) {
+  for (const group of mapGroups(groups)) {
     if (!wanted.has(group.id)) continue;
     const path = groupPath(groups, group.id);
     pages.push(
@@ -957,7 +984,7 @@ export function groupForestOutline(groups: GraphGroup[]) {
         number: outlineNumber(next),
         title: groupTitle(group.title),
         path: groupPath(groups, group.id).join(" / "),
-        kind: isLeaf(groups, group.id) ? "Group" : "Folder",
+        kind: isTeam(group) ? "Team" : isMapGroup(groups, group.id) ? "Group" : "Folder",
       });
       walk(group.id, next);
     });

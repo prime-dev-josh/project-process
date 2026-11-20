@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { groupPath, leafGroups } from "../graph/groupTree";
+import { groupPath, mapGroups } from "../graph/groupTree";
 import { groupPaintColor, groupTitle, UNGROUPED_FILTER } from "../graph/groups";
 import { cx, field, ghostBtn, primaryBtn } from "../styles";
 import type { GraphGroup, GraphNode } from "../types";
@@ -22,7 +22,7 @@ type Props = {
 export default function FlowchartExportModal({ groups, nodes, onExport, onCancel }: Props) {
   const exportRef = useRef<HTMLButtonElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const leaves = useMemo(() => leafGroups(groups), [groups]);
+  const leaves = useMemo(() => mapGroups(groups), [groups]);
   const rows = useMemo(() => {
     const list: Row[] = leaves.map((group) => {
       const path = groupPath(groups, group.id);

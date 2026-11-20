@@ -2,27 +2,38 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEven
 import {
   childrenOf,
   descendantMemberCount,
+  groupAssignees,
   groupPath,
   isLeaf,
+  isMapGroup,
+  isTeam,
   memberCount,
   rootGroups,
   subtreeIds,
 } from "../graph/groupTree";
+import { employeeInitials } from "../graph/employee";
 import { groupPaintColor, groupTitle } from "../graph/groups";
-import { cx, dangerText, field, ghostBtn, primaryBtn, toolBtn } from "../styles";
+import { personStyle } from "../data/personStyle";
+import { cx, dangerText, field, fieldArea, ghostBtn, primaryBtn, toolBtn } from "../styles";
 import type { GraphGroup, GraphNode } from "../types";
 import HexColorField from "./HexColorField";
+import EmployeeListField from "./EmployeeListField";
+import type { GroupEditPatch } from "./GroupManager";
 
 const BOX_W = 188;
 const BOX_H = 48;
+const TEAM_W = 156;
+const TEAM_H = 34;
+const TEAM_GAP = 8;
 const EDIT_BOX_W = 252;
-const EDIT_BOX_H = 224;
+const EDIT_BOX_H = 318;
+const TEAM_EDIT_H = 420;
 const V_GAP = 56;
 const SIB_GAP = 16;
 const SIB_DIST = BOX_W + SIB_GAP;
 const FOREST_ROOT = "\0forest";
 
-type Box = { id: string; x: number; y: number };
+type Box = { id: string; x: number; y: number; w: number; h: number; team?: boolean };
 type LayoutNode = {
   id: string;
   children: LayoutNode[];
@@ -53,8 +64,7 @@ type Props = {
   onPlace: (id: string, drop: GroupTreeDrop) => void;
   onInvalid: () => void;
   onAddRoot: () => void;
-  onRename: (groupId: string, title: string) => void;
-  onColor: (groupId: string, color: string) => void;
+  onUpdateGroup: (groupId: string, patch: GroupEditPatch) => void;
   onAddChild: (parentId: string) => void;
   onDelete: (groupId: string) => void;
   onRefresh: () => void;
@@ -184,7 +194,7 @@ function firstWalk(node: LayoutNode) {
 
 function secondWalk(node: LayoutNode, offset: number, depth: number, boxes: Box[]) {
   if (node.id !== FOREST_ROOT) {
-    boxes.push({ id: node.id, x: node.prelim + offset, y: depth * (BOX_H + V_GAP) });
+    boxes.push({ id: node.id, x: node.prelim + offset, y: depth * (BOX_H + V_GAP), w: BOX_W, h: BOX_H });
   }
   const nextDepth = node.id === FOREST_ROOT ? 0 : depth + 1;
   for (const child of node.children) secondWalk(child, offset + node.mod, nextDepth, boxes);
@@ -210,7 +220,7 @@ function buildLayoutTree(groups: GraphGroup[]) {
     const next = new Set(stack);
     next.add(id);
     node.children = childrenOf(groups, id)
-      .filter((kid) => !next.has(kid.id))
+      .filter((kid) => !isTeam(kid) && !next.has(kid.id))
       .map((kid, kidIndex) => make(kid.id, node, kidIndex, next));
     return node;
   };
@@ -239,12 +249,46 @@ function layoutForest(groups: GraphGroup[]): Box[] {
   if (minX !== 0) {
     for (const box of boxes) box.x -= minX;
   }
-  return boxes;
+
+  const rowPitch = BOX_H + V_GAP;
+  const depthOf = (box: Box) => Math.round(box.y / rowPitch);
+  const teamsByParent = new Map<string, GraphGroup[]>();
+  const extraByDepth = new Map<number, number>();
+  for (const box of boxes) {
+    const teams = childrenOf(groups, box.id).filter((group) => isTeam(group));
+    if (!teams.length) continue;
+    teamsByParent.set(box.id, teams);
+    const stack = 10 + teams.length * TEAM_H + (teams.length - 1) * TEAM_GAP;
+    const extra = Math.max(0, stack - V_GAP + 8);
+    const depth = depthOf(box);
+    extraByDepth.set(depth, Math.max(extraByDepth.get(depth) ?? 0, extra));
+  }
+  const maxDepth = boxes.reduce((max, box) => Math.max(max, depthOf(box)), 0);
+  const shiftAt = new Map<number, number>();
+  let shift = 0;
+  for (let depth = 0; depth <= maxDepth; depth += 1) {
+    shiftAt.set(depth, shift);
+    shift += extraByDepth.get(depth) ?? 0;
+  }
+  for (const box of boxes) box.y += shiftAt.get(depthOf(box)) ?? 0;
+
+  const teamBoxes: Box[] = [];
+  for (const [parentId, teams] of teamsByParent) {
+    const parent = boxes.find((box) => box.id === parentId);
+    if (!parent) continue;
+    const x = parent.x + (BOX_W - TEAM_W) / 2;
+    let y = parent.y + BOX_H + 10;
+    for (const team of teams) {
+      teamBoxes.push({ id: team.id, x, y, w: TEAM_W, h: TEAM_H, team: true });
+      y += TEAM_H + TEAM_GAP;
+    }
+  }
+  return [...boxes, ...teamBoxes];
 }
 
-function clip(title: string) {
+function clip(title: string, limit = 24) {
   const text = groupTitle(title);
-  return text.length > 24 ? `${text.slice(0, 23)}…` : text;
+  return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
 }
 
 function nodeCountLabel(count: number) {
@@ -253,10 +297,10 @@ function nodeCountLabel(count: number) {
 
 function editCardLayout(box: Box) {
   return {
-    x: box.x + (BOX_W - EDIT_BOX_W) / 2,
+    x: box.x + (box.w - EDIT_BOX_W) / 2,
     y: box.y,
     w: EDIT_BOX_W,
-    h: EDIT_BOX_H,
+    h: box.team ? TEAM_EDIT_H : EDIT_BOX_H,
   };
 }
 
@@ -267,8 +311,7 @@ export default function GroupTreeCanvas({
   onPlace,
   onInvalid,
   onAddRoot,
-  onRename,
-  onColor,
+  onUpdateGroup,
   onAddChild,
   onDelete,
   onRefresh,
@@ -282,7 +325,7 @@ export default function GroupTreeCanvas({
   const [zoom, setZoom] = useState(1);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
-  const boxHeight = (id: string) => (editingId === id ? EDIT_BOX_H : BOX_H);
+  const boxHeight = (box: Box) => (editingId === box.id ? (box.team ? TEAM_EDIT_H : EDIT_BOX_H) : box.h);
   const [drag, setDrag] = useState<{ id: string; x: number; y: number; drop: Drop | null } | null>(null);
   const [middlePan, setMiddlePan] = useState(false);
   const dropRef = useRef<Drop | null>(null);
@@ -322,23 +365,43 @@ export default function GroupTreeCanvas({
   }, [editingId, hiddenIds]);
 
   const edges = useMemo(() => {
-    const paths: { key: string; d: string }[] = [];
+    const paths: { key: string; d: string; team?: boolean }[] = [];
     for (const group of groups) {
       const parent = boxById.get(group.id);
       if (!parent || hiddenIds.has(group.id) || collapsedIds.has(group.id)) continue;
       const kids = childrenOf(groups, group.id);
       if (!kids.length) continue;
-      const x1 = parent.x + BOX_W / 2;
-      const y1 = parent.y + BOX_H;
-      const busY = y1 + V_GAP / 2;
-      for (const kid of kids) {
+      const groupsKids = kids.filter((kid) => !isTeam(kid));
+      const teamKids = kids.filter((kid) => isTeam(kid));
+      if (groupsKids.length) {
+        const x1 = parent.x + parent.w / 2;
+        const y1 = parent.y + parent.h;
+        const busY = y1 + V_GAP / 2;
+        for (const kid of groupsKids) {
+          const child = boxById.get(kid.id);
+          if (!child || hiddenIds.has(kid.id)) continue;
+          const x2 = child.x + child.w / 2;
+          paths.push({
+            key: `${group.id}->${kid.id}`,
+            d: `M ${x1} ${y1} L ${x1} ${busY} L ${x2} ${busY} L ${x2} ${child.y}`,
+          });
+        }
+      }
+      const visibleTeams = teamKids.flatMap((kid) => {
         const child = boxById.get(kid.id);
-        if (!child || hiddenIds.has(kid.id)) continue;
-        const x2 = child.x + BOX_W / 2;
-        paths.push({
-          key: `${group.id}->${kid.id}`,
-          d: `M ${x1} ${y1} L ${x1} ${busY} L ${x2} ${busY} L ${x2} ${child.y}`,
-        });
+        return child && !hiddenIds.has(kid.id) ? [child] : [];
+      });
+      if (visibleTeams.length) {
+        const x = parent.x + parent.w / 2;
+        let fromY = parent.y + parent.h;
+        for (const child of visibleTeams) {
+          paths.push({
+            key: `${group.id}->${child.id}`,
+            team: true,
+            d: `M ${x} ${fromY} L ${x} ${child.y}`,
+          });
+          fromY = child.y + child.h;
+        }
       }
     }
     return paths;
@@ -359,9 +422,9 @@ export default function GroupTreeCanvas({
         (box) =>
           box.id !== dragId &&
           gx >= box.x &&
-          gx <= box.x + BOX_W &&
+          gx <= box.x + box.w &&
           gy >= box.y &&
-          gy <= box.y + boxHeight(box.id),
+          gy <= box.y + boxHeight(box),
       )
       .sort((a, b) => b.y - a.y || a.x - b.x);
   }
@@ -377,6 +440,15 @@ export default function GroupTreeCanvas({
       const localX = gx - hit.x;
       const localY = gy - hit.y;
 
+      if (target && isTeam(target)) {
+        if (sameParent && isTeam(dragGroup)) {
+          const sibs = childrenOf(groups, target.parentId).filter((sib) => sib.id !== id);
+          const index = sibs.findIndex((sib) => sib.id === hit.id);
+          const beforeId = localY < hit.h / 2 ? hit.id : sibs[index + 1]?.id ?? null;
+          return { kind: "reorder", parentId: target.parentId, beforeId };
+        }
+        return { kind: "child", parentId: target.parentId ?? hit.id };
+      }
       if (sameParent && localX < REORDER_EDGE) {
         return { kind: "reorder", parentId: target?.parentId ?? null, beforeId: hit.id };
       }
@@ -389,7 +461,7 @@ export default function GroupTreeCanvas({
           beforeId: sibs[index + 1]?.id ?? null,
         };
       }
-      const hitH = boxHeight(hit.id);
+      const hitH = boxHeight(hit);
       if (localY <= hitH * ADOPT_TOP_FRAC) {
         return { kind: "adopt", childId: hit.id };
       }
@@ -398,10 +470,11 @@ export default function GroupTreeCanvas({
 
     for (const box of visibleBoxes) {
       if (box.id === id || blocked.has(box.id)) continue;
-      const bandTop = box.y + BOX_H;
-      const bandBottom = box.y + BOX_H + V_GAP * 0.62;
+      const bandTop = box.y + box.h;
+      const bandBottom = box.y + box.h + V_GAP * 0.62;
+      if (box.team) continue;
       if (gy < bandTop || gy > bandBottom) continue;
-      if (gx < box.x - 12 || gx > box.x + BOX_W + 12) continue;
+      if (gx < box.x - 12 || gx > box.x + box.w + 12) continue;
       return { kind: "child", parentId: box.id };
     }
 
@@ -419,14 +492,14 @@ export default function GroupTreeCanvas({
       const parentId = key || null;
       if (parentId && blocked.has(parentId)) continue;
       const minY = Math.min(...row.map((box) => box.y)) - 12;
-      const maxY = Math.max(...row.map((box) => box.y)) + BOX_H + 12;
+      const maxY = Math.max(...row.map((box) => box.y + box.h)) + 12;
       if (gy < minY || gy > maxY) continue;
       const sorted = [...row].sort((a, b) => a.x - b.x);
       if (gx < sorted[0].x - SIB_GAP / 2) return { kind: "reorder", parentId, beforeId: sorted[0].id };
       for (let index = 0; index < sorted.length; index += 1) {
         const current = sorted[index];
         const next = sorted[index + 1];
-        const gapStart = current.x + BOX_W;
+        const gapStart = current.x + current.w;
         const gapEnd = next ? next.x : gapStart + SIB_GAP;
         if (!next && gx > gapStart + SIB_GAP / 2) {
           return { kind: "reorder", parentId, beforeId: null };
@@ -449,8 +522,8 @@ export default function GroupTreeCanvas({
     for (const box of boxes) {
       minX = Math.min(minX, box.x);
       minY = Math.min(minY, box.y);
-      maxX = Math.max(maxX, box.x + BOX_W);
-      maxY = Math.max(maxY, box.y + BOX_H);
+      maxX = Math.max(maxX, box.x + box.w);
+      maxY = Math.max(maxY, box.y + box.h);
     }
     const width = Math.max(1, maxX - minX);
     const height = Math.max(1, maxY - minY);
@@ -657,9 +730,9 @@ export default function GroupTreeCanvas({
   const bounds = boxes.reduce(
     (acc, box) => ({
       minX: Math.min(acc.minX, box.x),
-      maxX: Math.max(acc.maxX, box.x + BOX_W),
+      maxX: Math.max(acc.maxX, box.x + box.w),
       minY: Math.min(acc.minY, box.y),
-      maxY: Math.max(acc.maxY, box.y + boxHeight(box.id)),
+      maxY: Math.max(acc.maxY, box.y + boxHeight(box)),
     }),
     { minX: 0, maxX: BOX_W, minY: 0, maxY: BOX_H },
   );
@@ -700,8 +773,9 @@ export default function GroupTreeCanvas({
                   key={edge.key}
                   d={edge.d}
                   fill="none"
-                  stroke="var(--line)"
-                  strokeWidth={1.5}
+                  stroke={edge.team ? "var(--accent)" : "var(--line)"}
+                  strokeWidth={edge.team ? 1.25 : 1.5}
+                  strokeDasharray={edge.team ? "2 3" : undefined}
                   opacity={dimTree(childId) ? 0.5 : 1}
                 />
               );
@@ -800,8 +874,7 @@ export default function GroupTreeCanvas({
           >
             <GroupCardEditForm
               group={editingCard.group}
-              onRename={onRename}
-              onColor={onColor}
+              onUpdateGroup={onUpdateGroup}
               onAddChild={addChildVisible}
               onDelete={onDelete}
               onClose={() => setEditingId(null)}
@@ -831,7 +904,7 @@ export default function GroupTreeCanvas({
           <div className="max-w-sm rounded-xl border border-[var(--line)] bg-[var(--card)] px-6 py-5 text-center shadow-[var(--shadow)]">
             <p className="m-0 text-sm font-semibold text-[var(--text)]">No groups yet</p>
             <p className="mt-1 mb-3 text-[12px] leading-snug text-[var(--muted)]">
-              Create a root group, then add children. Only groups without children can hold nodes on the map.
+              Create a root group, then add children. Lock a group to use it on the map. A new locked group starts with its own copy of Long Lead's teams.
             </p>
             <button type="button" className={primaryBtn} onClick={onAddRoot}>
               Create a group
@@ -908,6 +981,41 @@ function ReorderMark({
   return <line x1={x} x2={x} y1={anchor.y - 8} y2={anchor.y + BOX_H + 8} stroke="var(--accent)" strokeWidth={2} />;
 }
 
+function AssigneeMarks({
+  x,
+  y,
+  assignees,
+}: {
+  x: number;
+  y: number;
+  assignees: { name: string; email: string }[];
+}) {
+  const shown = assignees.slice(0, 5);
+  const extra = assignees.length - shown.length;
+  return (
+    <g>
+      {shown.map((person, index) => {
+        const { color } = personStyle(person.email || person.name);
+        const initials = employeeInitials(person.name || person.email);
+        return (
+          <g key={`${person.email || person.name}-${index}`} transform={`translate(${x + index * 12} ${y})`}>
+            <circle cx={8} cy={8} r={8} fill={color} />
+            <title>{person.name || person.email}</title>
+            <text x={8} y={11} textAnchor="middle" fontSize={6} fontWeight={700} fill="#1a1208">
+              {initials.slice(0, 2)}
+            </text>
+          </g>
+        );
+      })}
+      {extra > 0 ? (
+        <text x={x + shown.length * 12 + 2} y={y + 12} fontSize={9} fill="var(--muted)">
+          +{extra}
+        </text>
+      ) : null}
+    </g>
+  );
+}
+
 function GroupTreeCard({
   box,
   group,
@@ -936,41 +1044,77 @@ function GroupTreeCard({
   onToggleCollapsed: (id: string) => void;
 }) {
   const leaf = isLeaf(groups, group.id);
+  const mapGroup = isMapGroup(groups, group.id);
+  const team = isTeam(group);
   const color = groupPaintColor(group);
-  const count = leaf ? memberCount(nodes, group.id) : descendantMemberCount(groups, nodes, group.id);
+  const count = mapGroup ? memberCount(nodes, group.id) : descendantMemberCount(groups, nodes, group.id);
+  const people = groupAssignees(group);
+  const role = team ? "team" : mapGroup ? "group" : "folder";
 
   return (
     <g
       data-group-id={group.id}
       role="button"
       tabIndex={0}
-      aria-label={`${groupTitle(group.title)}, ${leaf ? "group" : "folder"}, ${nodeCountLabel(count)}${collapsed ? `, ${hiddenChildCount} hidden` : ""}`}
-      className={cx("group-tree-card cursor-default", collapsed && "is-collapsed")}
+      aria-label={`${groupTitle(group.title)}, ${role}${mapGroup ? ", locked" : ""}, ${nodeCountLabel(count)}${people.length ? `, ${people.length} people` : ""}${group.notes?.trim() ? ", has notes" : ""}${collapsed ? `, ${hiddenChildCount} hidden` : ""}`}
+      className={cx("group-tree-card cursor-default", team && "is-team", collapsed && "is-collapsed")}
       opacity={dimmed ? 0.5 : 1}
     >
       <rect
         x={box.x}
         y={box.y}
-        width={BOX_W}
-        height={BOX_H}
-        rx={8}
-        fill="var(--card)"
-        stroke={dropHot ? "var(--accent)" : leaf ? color : "var(--line)"}
-        strokeWidth={dropHot ? 2.5 : 2}
+        width={box.w}
+        height={box.h}
+        rx={team ? 17 : 8}
+        fill={team ? "color-mix(in srgb, var(--accent) 10%, var(--card))" : "var(--card)"}
+        stroke={dropHot ? "var(--accent)" : team ? "var(--accent)" : mapGroup ? color : "var(--line)"}
+        strokeWidth={dropHot || mapGroup ? 2.5 : 1.25}
+        strokeDasharray={team && !dropHot ? "4 3" : undefined}
       />
-      <text x={box.x + BOX_W / 2} y={box.y + 20} textAnchor="middle" fontSize={12} fontWeight={700} fill="var(--text)">
-        {clip(group.title)}
+      {team ? (
+        <text x={box.x + 12} y={box.y + 13} fontSize={8} fontWeight={700} letterSpacing={0.6} fill="var(--accent)">
+          {`TEAM${people.length ? ` · ${people.length}` : ""}${group.notes?.trim() ? " · note" : ""}`}
+        </text>
+      ) : null}
+      {mapGroup ? (
+        <g transform={`translate(${box.x + 8} ${box.y + 8})`} aria-hidden>
+          <path
+            d="M5.2 6.2 V4.8 C5.2 3.2 6.4 2 8 2 S10.8 3.2 10.8 4.8 V6.2 H12.2 V14 H3.8 V6.2 Z M6.4 6.2 H9.6 V4.8 C9.6 3.9 8.9 3.2 8 3.2 S6.4 3.9 6.4 4.8 Z"
+            fill="var(--accent)"
+          />
+        </g>
+      ) : null}
+      <text
+        x={team ? box.x + 12 : box.x + box.w / 2}
+        y={team ? box.y + 26 : box.y + 20}
+        textAnchor={team ? "start" : "middle"}
+        fontSize={team ? 11 : 12}
+        fontWeight={700}
+        fill="var(--text)"
+      >
+        {clip(group.title, team ? 18 : 24)}
       </text>
-      <text x={box.x + BOX_W / 2} y={box.y + 36} textAnchor="middle" fontSize={10} fill="var(--muted)">
-        {nodeCountLabel(count)}
-      </text>
+      {team ? null : people.length ? (
+        <>
+          <AssigneeMarks x={box.x + 10} y={box.y + 26} assignees={people} />
+          {mapGroup ? (
+            <text x={box.x + box.w - 10} y={box.y + 38} textAnchor="end" fontSize={9} fill="var(--muted)">
+              {nodeCountLabel(count)}
+            </text>
+          ) : null}
+        </>
+      ) : (
+        <text x={box.x + box.w / 2} y={box.y + 36} textAnchor="middle" fontSize={10} fill="var(--muted)">
+          {nodeCountLabel(count)}
+        </text>
+      )}
       <g
         data-edit-trigger
         role="button"
         tabIndex={-1}
         aria-label={`Edit ${groupTitle(group.title)}`}
         className="cursor-pointer"
-        transform={`translate(${box.x + BOX_W - 28} ${box.y + 14})`}
+        transform={`translate(${box.x + box.w - (team ? 22 : 28)} ${box.y + (team ? 7 : 14)})`}
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => {
           event.stopPropagation();
@@ -996,7 +1140,7 @@ function GroupTreeCard({
           />
         </g>
       )}
-      <g className="group-card-delete" transform={`translate(${box.x + BOX_W - 9} ${box.y - 9})`}>
+      <g className="group-card-delete" transform={`translate(${box.x + box.w - 9} ${box.y - 9})`}>
         <GroupCardBadge
           label={`Delete ${groupTitle(group.title)}`}
           glyph="−"
@@ -1004,15 +1148,25 @@ function GroupTreeCard({
           onClick={() => onDelete(group.id)}
         />
       </g>
-      <g className="group-card-add" transform={`translate(${box.x + BOX_W / 2 - 9} ${box.y + BOX_H - 9})`}>
-        <GroupCardBadge
-          label={`Add a child of ${groupTitle(group.title)}`}
-          glyph="+"
-          fill="var(--accent)"
-          onClick={() => onAddChild(group.id)}
-        />
-      </g>
-      <title>{groupPath(groups, group.id).join(" / ")}</title>
+      {team ? null : (
+        <g className="group-card-add" transform={`translate(${box.x + box.w / 2 - 9} ${box.y + box.h - 9})`}>
+          <GroupCardBadge
+            label={mapGroup ? `Add a team under ${groupTitle(group.title)}` : `Add a child of ${groupTitle(group.title)}`}
+            glyph="+"
+            fill="var(--accent)"
+            onClick={() => onAddChild(group.id)}
+          />
+        </g>
+      )}
+      <title>
+        {[
+          groupPath(groups, group.id).join(" / "),
+          people.length ? people.map((person) => person.name || person.email).join(", ") : "",
+          group.notes?.trim() ?? "",
+        ]
+          .filter(Boolean)
+          .join("\n")}
+      </title>
     </g>
   );
 }
@@ -1099,21 +1253,20 @@ function CollapseBadge({
 
 function GroupCardEditForm({
   group,
-  onRename,
-  onColor,
+  onUpdateGroup,
   onAddChild,
   onDelete,
   onClose,
 }: {
   group: GraphGroup;
-  onRename: (groupId: string, title: string) => void;
-  onColor: (groupId: string, color: string) => void;
+  onUpdateGroup: (groupId: string, patch: GroupEditPatch) => void;
   onAddChild: (parentId: string) => void;
   onDelete: (groupId: string) => void;
   onClose: () => void;
 }) {
   const committed = groupTitle(group.title);
   const [name, setName] = useState(committed);
+  const [notes, setNotes] = useState(group.notes ?? "");
   const nameRef = useRef(name);
   const inputRef = useRef<HTMLInputElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -1121,7 +1274,8 @@ function GroupCardEditForm({
 
   useEffect(() => {
     setName(committed);
-  }, [committed, group.id]);
+    setNotes(group.notes ?? "");
+  }, [committed, group.id, group.notes]);
 
   useLayoutEffect(() => {
     const wrap = wrapRef.current;
@@ -1155,20 +1309,26 @@ function GroupCardEditForm({
     const base = committed;
     return () => {
       const next = groupTitle(nameRef.current);
-      if (next !== base) onRename(id, next);
+      if (next !== base) onUpdateGroup(id, { title: next });
     };
-  }, [group.id, committed, onRename]);
+  }, [group.id, committed, onUpdateGroup]);
 
   function commitName() {
     const next = groupTitle(name);
     setName(next);
-    if (next !== committed) onRename(group.id, next);
+    if (next !== committed) onUpdateGroup(group.id, { title: next });
+  }
+
+  function commitNotes() {
+    const next = notes.replace(/\r\n/g, "\n").slice(0, 8000);
+    setNotes(next);
+    if (next !== (group.notes ?? "")) onUpdateGroup(group.id, { notes: next });
   }
 
   return (
-      <div
+        <div
         ref={wrapRef}
-        className="flex h-full min-h-0 flex-col gap-2 rounded-lg bg-[var(--card)] p-1 shadow-[var(--shadow)]"
+        className="flex h-full min-h-0 flex-col gap-2 overflow-hidden rounded-lg bg-[var(--card)] p-1 shadow-[var(--shadow)]"
         onPointerDown={(event) => event.stopPropagation()}
       >
         <input
@@ -1196,20 +1356,53 @@ function GroupCardEditForm({
         <HexColorField
           value={groupPaintColor(group)}
           ariaLabel={`Color for ${committed}`}
-          onChange={(color) => onColor(group.id, color)}
+          onChange={(color) => onUpdateGroup(group.id, { color })}
         />
+        {isTeam(group) ? null : (
+          <label className="flex cursor-pointer items-center justify-between gap-2 px-0.5 text-[11px] font-semibold text-[var(--text)]">
+            <span>Lock as map group</span>
+            <input
+              type="checkbox"
+              checked={group.locked === true}
+              onChange={(event) => onUpdateGroup(group.id, { locked: event.target.checked })}
+            />
+          </label>
+        )}
+        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
+          <p className="m-0 text-[10px] font-semibold tracking-wide text-[var(--muted)] uppercase">People</p>
+          <EmployeeListField
+            assignees={group.assignees ?? []}
+            ariaLabel={`People for ${committed}`}
+            onChange={(assignees) => onUpdateGroup(group.id, { assignees })}
+          />
+          {isTeam(group) ? (
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-semibold tracking-wide text-[var(--muted)] uppercase">Notes</span>
+              <textarea
+                className={cx(fieldArea, "min-h-[88px] text-[12px]")}
+                aria-label={`Notes for ${committed}`}
+                value={notes}
+                rows={4}
+                onChange={(event) => setNotes(event.target.value)}
+                onBlur={commitNotes}
+              />
+            </label>
+          ) : null}
+        </div>
         <div className="mt-auto flex gap-1.5 pt-1">
-          <button
-            type="button"
-            className={cx(ghostBtn, "min-w-0 flex-1 px-2 py-1.5 text-[11px]")}
-            onClick={() => {
-              commitName();
-              onClose();
-              onAddChild(group.id);
-            }}
-          >
-            Add child
-          </button>
+          {isTeam(group) ? null : (
+            <button
+              type="button"
+              className={cx(ghostBtn, "min-w-0 flex-1 px-2 py-1.5 text-[11px]")}
+              onClick={() => {
+                commitName();
+                onClose();
+                onAddChild(group.id);
+              }}
+            >
+              {group.locked ? "Add team" : "Add child"}
+            </button>
+          )}
           <button
             type="button"
             className={cx(ghostBtn, dangerText, "min-w-0 flex-1 px-2 py-1.5 text-[11px]")}
@@ -1240,27 +1433,31 @@ function Ghost({
   y: number;
 }) {
   if (!group) return null;
-  const leaf = isLeaf(groups, group.id);
+  const team = isTeam(group);
+  const mapGroup = isMapGroup(groups, group.id);
   const color = groupPaintColor(group);
-  const count = leaf ? memberCount(nodes, group.id) : descendantMemberCount(groups, nodes, group.id);
+  const count = mapGroup ? memberCount(nodes, group.id) : descendantMemberCount(groups, nodes, group.id);
   return (
     <g opacity={0.92} pointerEvents="none">
       <rect
         x={x}
         y={y}
-        width={BOX_W}
-        height={BOX_H}
-        rx={8}
-        fill="var(--card)"
-        stroke={leaf ? color : "var(--line)"}
-        strokeWidth={2}
+        width={team ? TEAM_W : BOX_W}
+        height={team ? TEAM_H : BOX_H}
+        rx={team ? 17 : 8}
+        fill={team ? "color-mix(in srgb, var(--accent) 10%, var(--card))" : "var(--card)"}
+        stroke={team ? "var(--accent)" : mapGroup ? color : "var(--line)"}
+        strokeWidth={1.25}
+        strokeDasharray={team ? "4 3" : undefined}
       />
-      <text x={x + BOX_W / 2} y={y + 20} textAnchor="middle" fontSize={12} fontWeight={700} fill="var(--text)">
-        {clip(group.title)}
+      <text x={x + (team ? TEAM_W : BOX_W) / 2} y={y + (team ? 22 : 20)} textAnchor="middle" fontSize={team ? 11 : 12} fontWeight={700} fill="var(--text)">
+        {clip(group.title, team ? 18 : 24)}
       </text>
-      <text x={x + BOX_W / 2} y={y + 36} textAnchor="middle" fontSize={10} fill="var(--muted)">
-        {nodeCountLabel(count)}
-      </text>
+      {team ? null : (
+        <text x={x + BOX_W / 2} y={y + 36} textAnchor="middle" fontSize={10} fill="var(--muted)">
+          {nodeCountLabel(count)}
+        </text>
+      )}
     </g>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { groupPath, leafGroups } from "../graph/groupTree";
+import { groupPath, mapGroups } from "../graph/groupTree";
 import { groupPaintColor, groupTitle, UNGROUPED_FILTER } from "../graph/groups";
 import { groupCompletionStats } from "../graph/workflowStatus";
 import { placePortaledMenu, portaledMenuListClass, portaledMenuShellClass, type PortaledMenuPos } from "../lib/dropdownPortal";
@@ -77,7 +77,7 @@ export default function GroupFilterPicker({ groups, nodes, colorBy, selected, on
     return !q || "ungrouped".includes(q);
   }, [query]);
 
-  const leaves = useMemo(() => leafGroups(groups), [groups]);
+  const leaves = useMemo(() => mapGroups(groups), [groups]);
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return leaves;

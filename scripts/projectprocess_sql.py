@@ -204,6 +204,23 @@ IF COL_LENGTH(N'{SCHEMA}.Group', N'parent_id') IS NULL
 IF COL_LENGTH(N'{SCHEMA}.Group', N'sort_order') IS NULL
     ALTER TABLE {SCHEMA}.[Group] ADD sort_order int NOT NULL
         CONSTRAINT DF_projectprocess_Group_sort DEFAULT (0);""",
+    f"""
+IF COL_LENGTH(N'{SCHEMA}.Group', N'locked') IS NULL
+    ALTER TABLE {SCHEMA}.[Group] ADD locked bit NOT NULL
+        CONSTRAINT DF_projectprocess_Group_locked DEFAULT (0);""",
+    f"""
+IF COL_LENGTH(N'{SCHEMA}.Group', N'kind') IS NULL
+    ALTER TABLE {SCHEMA}.[Group] ADD kind nvarchar(20) NOT NULL
+        CONSTRAINT DF_projectprocess_Group_kind DEFAULT (N'group');""",
+    f"""
+IF COL_LENGTH(N'{SCHEMA}.Group', N'template_team_id') IS NULL
+    ALTER TABLE {SCHEMA}.[Group] ADD template_team_id nvarchar(160) NULL;""",
+    f"""
+IF COL_LENGTH(N'{SCHEMA}.Group', N'assignees_json') IS NULL
+    ALTER TABLE {SCHEMA}.[Group] ADD assignees_json nvarchar(max) NULL;""",
+    f"""
+IF COL_LENGTH(N'{SCHEMA}.Group', N'notes') IS NULL
+    ALTER TABLE {SCHEMA}.[Group] ADD notes nvarchar(max) NULL;""",
     # Upgrades for databases created by earlier versions of the app.
     _add_column("Node", "updated_rev", "bigint NOT NULL CONSTRAINT DF_projectprocess_Node_rev DEFAULT (0)"),
     _add_column("Node", "updated_client", "nvarchar(64) NULL"),
